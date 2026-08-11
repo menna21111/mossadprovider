@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "247084842186",
+    "project_id": "mosaed-b7338",
+    "storage_bucket": "mosaed-b7338.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:247084842186:android:029c3c84d5bdea1f8d4833",
+        "android_client_info": {
+          "package_name": "com.example.mosaedprovider"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCU6HT_mHnEz69tJmUlnQT_ZS26zoLNQWU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
