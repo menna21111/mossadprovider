@@ -1,6 +1,6 @@
 class AppConstants {
   /// غيّر الـ base URL حسب الـ API الخاص بك
-  static const String baseUrl = 'https://mosaed-production.up.railway.app';
+  static const String baseUrl = 'https://api.mosa3ed.net';
 
   static const String appVersion = '2.4.1';
   static const String userType = 'provider';
@@ -12,6 +12,10 @@ class AppConstants {
   static const String providerAddresses = '/api/accounts/provider/addresses/';
   static String deleteAddress(String id) =>
       '/api/accounts/provider/addresses/$id/';
+  static const String providerBankAccounts =
+      '/api/accounts/provider/bank-accounts/';
+  static String providerBankAccountDetail(String id) =>
+      '/api/accounts/provider/bank-accounts/$id/';
   static const String logout = 'logout/';
   static const String biometricRegister = '/api/accounts/biometric/register/';
   static const String biometricLogin = '/api/accounts/biometric/login/';
@@ -55,6 +59,8 @@ class AppConstants {
       '/api/custom_services/provider/custom-requests/$requestId/chat/';
   static String providerCustomRequestChatRead(String requestId) =>
       '/api/custom_services/provider/custom-requests/$requestId/chat/read/';
+  static const String providerCustomRequestConversations =
+      '/api/custom_services/provider/custom-requests/conversations/';
 
   static const String notifications = '/api/custom_services/notifications/';
   static const String notificationsUnreadCount =

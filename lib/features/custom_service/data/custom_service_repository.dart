@@ -18,7 +18,10 @@ class CustomServiceRepository {
 
   Future<List<Specialization>> getSpecializations() async {
     try {
-      final response = await DioHelper.getData(url: AppConstants.specializations);
+      final response = await DioHelper.getData(
+        url: AppConstants.specializations,
+        isWithoutToken: true,
+      );
       return _parseList(response.data)
           .whereType<Map<String, dynamic>>()
           .map(Specialization.fromJson)

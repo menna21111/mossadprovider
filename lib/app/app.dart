@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
+import '../app/functions.dart';
 import '../app/navigator_key.dart';
 import '../app/theme_cubit.dart/theme_cubit.dart';
 import '../features/auth/presentation/login_screen.dart';
@@ -45,7 +46,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     return ScreenUtilInit(
-      designSize: const Size(360, 690),
+      designSize: const Size(440, 956),
       minTextAdapt: true,
       splitScreenMode: true,
       builder: (context, child) {
@@ -55,12 +56,18 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
               listener: (context, dueState) async {
                 if (dueState.isBlocked && !_dueLockDialogOpen) {
                   _dueLockDialogOpen = true;
-                  await showDialog<void>(
-                    context: context,
-                    useRootNavigator: true,
-                    barrierDismissible: false,
-                    builder: (_) => ProviderDueLockDialog(state: dueState),
-                  );
+                  final navContext = navigatorKey.currentContext;
+                  if (navContext != null) {
+                    await showModalBottomSheet<void>(
+                      context: navContext,
+                      useRootNavigator: true,
+                      isScrollControlled: true,
+                      isDismissible: false,
+                      enableDrag: false,
+                      backgroundColor: Colors.transparent,
+                      builder: (_) => ProviderDueLockDialog(state: dueState),
+                    );
+                  }
                   _dueLockDialogOpen = false;
                 }
 
@@ -85,11 +92,12 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
                   '/notifications': (_) => const NotificationsScreen(),
                 },
                 builder: (context, child) {
+                  AppFunctions.toastHostContext = context;
                   return MediaQuery(
                     data: MediaQuery.of(context).copyWith(
                       textScaler: const TextScaler.linear(1.0),
                     ),
-                    child: child!,
+                    child: child ?? const SizedBox.shrink(),
                   );
                 },
               ),

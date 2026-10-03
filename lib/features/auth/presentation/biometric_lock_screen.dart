@@ -15,9 +15,9 @@ import '../../../core/caching/cach_helper.dart';
 import '../../../core/services/biometric_service.dart';
 
 import '../data/auth_repository.dart';
-import 'biometric_success_screen.dart';
 import 'cubit/auth_cubit.dart';
 import 'login_screen.dart';
+import 'widgets/fingerprint_success_sheet.dart';
 import 'widgets/mosaed_buttons.dart';
 
 enum _BiometricLockState { ready, needsSetup, notLoggedIn, deviceUnavailable }
@@ -30,7 +30,6 @@ class BiometricLockScreen extends StatefulWidget {
 }
 
 class _BiometricLockScreenState extends State<BiometricLockScreen> {
-  bool _verified = false;
   bool _isLoading = false;
   bool _isSettingUp = false;
   _BiometricLockState _state = _BiometricLockState.ready;
@@ -92,7 +91,13 @@ class _BiometricLockScreenState extends State<BiometricLockScreen> {
     setState(() => _isSettingUp = false);
 
     if (result.success) {
-      AppFunctions.navigateToAndFinish(context, const BiometricSuccessScreen());
+      await showFingerprintSuccessSheet(
+        context,
+        title: 'mosaedFingerprintRegistered'.tr(),
+        subtitle: 'mosaedFingerprintRegisteredHint'.tr(),
+      );
+      if (!mounted) return;
+      await AuthNavigation.goAfterLogin(context);
       return;
     }
 
@@ -107,7 +112,6 @@ class _BiometricLockScreenState extends State<BiometricLockScreen> {
     if (_isLoading) return;
     setState(() {
       _isLoading = true;
-      _verified = false;
     });
 
     context.read<AuthCubit>().loginWithBiometric();
@@ -119,15 +123,16 @@ class _BiometricLockScreenState extends State<BiometricLockScreen> {
       listener: (context, state) {
         if (state is AuthVerified) {
           setState(() {
-            _verified = true;
             _isLoading = false;
           });
-          Future.delayed(const Duration(seconds: 1), () {
-            if (mounted) {
-              AuthNavigation.goAfterBiometricUnlock(context);
-            }
-          });
           context.read<AuthCubit>().reset();
+          showFingerprintSuccessSheet(
+            context,
+            title: 'mosaedVerifiedSuccess'.tr(),
+            subtitle: 'mosaedFingerprintUnlockHint'.tr(),
+          ).then((_) {
+            if (mounted) AuthNavigation.goAfterBiometricUnlock(context);
+          });
         } else if (state is AuthFailure) {
           setState(() => _isLoading = false);
           AppFunctions.showsToast(state.message, MosaedColors.danger, context);
@@ -139,15 +144,17 @@ class _BiometricLockScreenState extends State<BiometricLockScreen> {
         final showStatusPanel = _state != _BiometricLockState.ready;
 
         return Scaffold(
-          backgroundColor: MosaedColors.background,
+          backgroundColor: MosaedColors.surfaceWhite,
           body: SafeArea(
             child: Padding(
-              padding: const EdgeInsets.all(8.0),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
+              padding: EdgeInsets.symmetric(horizontal: 24.w),
+              child: SizedBox(
+                width: double.infinity,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
                   if (showStatusPanel) ...[
-                    SizedBox(height: 60.h),
                     _StatusCard(state: _state, message: _statusMessage!),
                     SizedBox(height: 40.h),
                     if (_state == _BiometricLockState.needsSetup)
@@ -167,8 +174,7 @@ class _BiometricLockScreenState extends State<BiometricLockScreen> {
                       )
                     else
                       MosaedPrimaryButton(
-                        text: 'mosaedBiometricUseOtpInstead'.tr(),
-                        icon: Icons.dialpad_rounded,
+                        text: 'mosaedUsePasswordInstead'.tr(),
                         onPressed: () {
                           AppFunctions.navigateToAndFinish(
                             context,
@@ -201,127 +207,80 @@ class _BiometricLockScreenState extends State<BiometricLockScreen> {
                   ] else ...[
                     SizedBox(height: 32.h),
                     FadeIn(
-                      child: Container(
-                        width: double.infinity,
-                        padding: EdgeInsets.symmetric(
-                          horizontal: 24.w,
-                          vertical: 32.h,
-                        ),
-                        decoration: BoxDecoration(
-                          color: MosaedColors.surface,
-                          borderRadius: BorderRadius.circular(24.r),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.05),
-                              blurRadius: 20,
-                              offset: const Offset(0, 8),
+                      child: Column(
+                        children: [
+                          Container(
+                            width: 120.w,
+                            height: 120.w,
+                            decoration: BoxDecoration(
+                              color: MosaedColors.successBg,
+                              shape: BoxShape.circle,
                             ),
-                          ],
-                        ),
-                        child: Column(
-                          children: [
-                            Container(
+                            child: Icon(
+                              Icons.fingerprint_rounded,
+                              size: 64.sp,
+                              color: MosaedColors.success,
+                            ),
+                          ),
+                          if (_isLoading) ...[
+                            SizedBox(height: 20.h),
+                            SizedBox(
                               width: 120.w,
-                              height: 120.w,
-                              decoration: BoxDecoration(
-                                color: MosaedColors.successBg,
-                                borderRadius: BorderRadius.circular(24.r),
-                                border: Border.all(
-                                  color: MosaedColors.success.withValues(
-                                    alpha: 0.4,
-                                  ),
-                                  width: 2,
-                                ),
-                              ),
-                              child: Stack(
-                                alignment: Alignment.center,
-                                children: [
-                                  Icon(
-                                    Icons.fingerprint_rounded,
-                                    size: 64.sp,
-                                    color: MosaedColors.primary,
-                                  ),
-                                  if (_isLoading)
-                                    SizedBox(
-                                      width: 100.w,
-                                      child: LinearProgressIndicator(
-                                        color: MosaedColors.primary,
-                                        backgroundColor: MosaedColors.border,
-                                      ),
-                                    ),
-                                ],
+                              child: LinearProgressIndicator(
+                                color: MosaedColors.brand,
+                                backgroundColor: MosaedColors.border,
                               ),
                             ),
-                            SizedBox(height: 24.h),
-                            Text(
-                              'mosaedWelcomeBack'.tr(),
-                              style: getBoldStyle(
-                                fontSize: 22.sp,
-                                color: MosaedColors.textPrimary,
-                              ),
-                            ),
-                            SizedBox(height: 10.h),
-                            Text(
-                              'mosaedBiometricInstruction'.tr(),
-                              textAlign: TextAlign.center,
-                              style: getRegularStyle(
-                                fontSize: 14.sp,
-                                color: MosaedColors.textSecondary,
-                              ),
-                            ),
-                            if (!_isLoading) ...[
-                              SizedBox(height: 24.h),
-                              MosaedPrimaryButton(
-                                text: 'mosaedBiometricLoginButton'.tr(),
-                                icon: Icons.fingerprint_rounded,
-                                onPressed: _authenticate,
-                              ),
-                            ],
                           ],
-                        ),
+                          SizedBox(height: 24.h),
+                          Text(
+                            'mosaedWelcomeBack'.tr(),
+                            style: getBoldStyle(
+                              fontSize: 16.sp,
+                              color: MosaedColors.textPrimary,
+                            ),
+                          ),
+                          SizedBox(height: 8.h),
+                          Text(
+                            'mosaedBiometricInstruction'.tr(),
+                            textAlign: TextAlign.center,
+                            style: getRegularStyle(
+                              fontSize: 12.sp,
+                              color: MosaedColors.textSecondary,
+                            ),
+                          ),
+                          if (!_isLoading) ...[
+                            SizedBox(height: 24.h),
+                            MosaedPrimaryButton(
+                              text: 'mosaedBiometricLoginButton'.tr(),
+                              icon: Icons.fingerprint_rounded,
+                              fontSize: 13,
+                              onPressed: _authenticate,
+                            ),
+                          ],
+                        ],
                       ),
                     ),
                   ],
                   SizedBox(height: 20.h),
-                  if (_verified)
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.check_circle_rounded,
-                          color: MosaedColors.success,
-                          size: 20.sp,
-                        ),
-                        SizedBox(width: 8.w),
-                        Text(
-                          'mosaedVerifiedSuccess'.tr(),
-                          style: getMediumStyle(
-                            fontSize: 14.sp,
-                            color: MosaedColors.success,
-                          ),
-                        ),
-                      ],
-                    ),
-                  MosaedOutlineButton(
-                    text: 'mosaedUseOtpInstead'.tr(),
-                    icon: Icons.dialpad_rounded,
-                    onPressed: () {
+                  GestureDetector(
+                    onTap: () {
                       AppFunctions.navigateToAndFinish(
                         context,
                         const LoginScrean(),
                       );
                     },
+                    child: Text(
+                      'mosaedUsePasswordInstead'.tr(),
+                      textAlign: TextAlign.center,
+                      style: getBoldStyle(
+                        fontSize: 13.sp,
+                        color: MosaedColors.brand,
+                      ),
+                    ),
                   ),
-                  // SizedBox(height: 20.h),
-                  // Text(
-                  //   'Mosaed v${AppConstants.appVersion} • ${'mosaedHighSecurity'.tr()}',
-                  //   style: getRegularStyle(
-                  //     fontSize: 11.sp,
-                  //     color: MosaedColors.textHint,
-                  //   ),
-                  // ),
-                  // SizedBox(height: 16.h),
                 ],
+                ),
               ),
             ),
           ),

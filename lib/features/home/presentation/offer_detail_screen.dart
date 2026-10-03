@@ -82,12 +82,17 @@ class _OfferDetailScreenState extends State<OfferDetailScreen> {
   void _openChat() {
     final requestId = _chatRequestId;
     if (requestId == null || requestId.isEmpty) return;
+    final initial = widget.initialOffer;
+    final price = _offer?.displayPrice ?? initial?.displayPrice;
+    final peer = initial?.customerName;
 
     AppFunctions.navigateTo(
       context,
       ChatScreen(
         requestId: requestId,
         requestTitle: _chatTitle,
+        peerName: peer,
+        price: (price != null && price > 0) ? price : null,
       ),
       PageTransitionType.rightToLeft,
     );

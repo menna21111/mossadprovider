@@ -18,7 +18,6 @@ import 'package:page_transition/page_transition.dart';
 
 import '../core/constants/app_constants.dart';
 import '../core/constants/color_manager.dart';
-import 'navigator_key.dart';
 
 class AppFunctions {
   static String reverseString(String originalString) {
@@ -93,42 +92,47 @@ class AppFunctions {
     return null;
   }
 
+  /// Context under the Navigator Overlay + Localizations (set from MaterialApp.builder).
+  static BuildContext? toastHostContext;
+
   static void showsToast(
     String text,
     Color color,
     BuildContext context, {
     int seconds = 5,
   }) {
-    final toastContext = resolveToastContext(context);
-    if (toastContext == null) return;
+    try {
+      final toastContext = resolveToastContext(context);
+      if (toastContext == null) return;
 
-    showToast(
-      text,
-      context: toastContext,
-      backgroundColor: color,
-      animation: StyledToastAnimation.slideFromTopFade,
-      reverseAnimation: StyledToastAnimation.slideToTopFade,
-      position: StyledToastPosition.top,
-      animDuration: const Duration(seconds: 2),
-      duration: Duration(seconds: seconds),
-      curve: Curves.elasticOut,
-      reverseCurve: Curves.easeInOutCirc,
-    );
+      showToast(
+        text,
+        context: toastContext,
+        backgroundColor: color,
+        animation: StyledToastAnimation.slideFromTopFade,
+        reverseAnimation: StyledToastAnimation.slideToTopFade,
+        position: StyledToastPosition.top,
+        animDuration: const Duration(seconds: 1),
+        duration: Duration(seconds: seconds),
+        curve: Curves.easeOut,
+        reverseCurve: Curves.easeInOutCirc,
+      );
+    } catch (e) {
+      debugPrint('showsToast skipped: $e');
+    }
   }
 
-  /// [navigatorKey.currentContext] is the Navigator itself (parent of Overlay).
-  /// Styled toast needs a context under Overlay — use a child entry when needed.
+  /// Socket toasts often pass [navigatorKey] (parent of Overlay).
+  /// Prefer a context that already has Overlay + Localizations.
   static BuildContext? resolveToastContext(BuildContext context) {
-    if (Overlay.maybeOf(context) != null) return context;
+    if (context.mounted && Overlay.maybeOf(context) != null) return context;
 
-    final overlay = navigatorKey.currentState?.overlay;
-    if (overlay == null) return null;
+    final host = toastHostContext;
+    if (host != null && host.mounted && Overlay.maybeOf(host) != null) {
+      return host;
+    }
 
-    BuildContext? childContext;
-    overlay.context.visitChildElements((element) {
-      childContext ??= element;
-    });
-    return childContext;
+    return null;
   }
 
   static String prettyTime(String timeString) {

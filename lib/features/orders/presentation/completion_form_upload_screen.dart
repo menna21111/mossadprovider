@@ -4,15 +4,19 @@ import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../../app/functions.dart';
+import '../../../core/constants/assets_manager.dart';
 import '../../../core/constants/mosaed_colors.dart';
 import '../../../core/constants/styles_manager.dart';
 import '../../../core/network/failure.dart';
 import '../../auth/presentation/widgets/mosaed_buttons.dart';
 import '../data/completion_form_model.dart';
 import '../data/provider_orders_repository.dart';
+
+enum CompletionUploadPhase { before, after, finish }
 
 class CompletionFormUploadScreen extends StatefulWidget {
   const CompletionFormUploadScreen({
@@ -21,12 +25,14 @@ class CompletionFormUploadScreen extends StatefulWidget {
     this.serviceTitle,
     this.kind = CompletionFormKind.booking,
     this.startOnFinishStep = false,
+    this.forcePhase,
   });
 
   final String bookingId;
   final String? serviceTitle;
   final CompletionFormKind kind;
   final bool startOnFinishStep;
+  final CompletionUploadPhase? forcePhase;
 
   @override
   State<CompletionFormUploadScreen> createState() =>
@@ -42,8 +48,7 @@ class _CompletionFormUploadScreenState extends State<CompletionFormUploadScreen>
   bool _submitting = false;
   bool _uploading = false;
   String? _error;
-  File? _beforeFile;
-  File? _afterFile;
+  File? _pickedFile;
 
   @override
   void initState() {
@@ -59,19 +64,19 @@ class _CompletionFormUploadScreenState extends State<CompletionFormUploadScreen>
 
   String get _bookingId => widget.bookingId;
 
+  CompletionUploadPhase get _phase {
+    if (widget.forcePhase != null) return widget.forcePhase!;
+    if (widget.startOnFinishStep) return CompletionUploadPhase.finish;
+    final form = _completionForm;
+    if (form == null || form.workNotStarted) {
+      return CompletionUploadPhase.before;
+    }
+    if (form.needsAfterUpload) return CompletionUploadPhase.after;
+    if (form.readyToFinish) return CompletionUploadPhase.finish;
+    return CompletionUploadPhase.before;
+  }
+
   bool get _isFinished => _completionForm?.isFinished == true;
-
-  bool get _workNotStarted => _completionForm?.workNotStarted ?? true;
-
-  bool get _needsAfterUpdate => _completionForm?.needsAfterUpload ?? false;
-
-  bool get _hasBothImages => _completionForm?.hasRealAfterImage ?? false;
-
-  bool get _readyToFinish => _completionForm?.readyToFinish ?? false;
-
-  String? get _displayBefore => _completionForm?.beforeImage;
-
-  String? get _displayAfter => _completionForm?.afterImage;
 
   Future<void> _load() async {
     setState(() {
@@ -86,15 +91,11 @@ class _CompletionFormUploadScreenState extends State<CompletionFormUploadScreen>
 
       if (!mounted) return;
 
-      final notes = completionForm.notes?.trim().isNotEmpty == true
-          ? completionForm.notes!
-          : 'تم تنفيذ الخدمة بالكامل وتسليمها للعميل';
-
+      final notes = completionForm.notes?.trim() ?? '';
       setState(() {
         _completionForm = completionForm;
-        _notesController.text = notes;
-        _beforeFile = null;
-        _afterFile = null;
+        if (notes.isNotEmpty) _notesController.text = notes;
+        _pickedFile = null;
         _loading = false;
       });
     } on ServerFailure catch (e) {
@@ -112,32 +113,16 @@ class _CompletionFormUploadScreenState extends State<CompletionFormUploadScreen>
     }
   }
 
-  Future<void> _showImageSourceSheet({required bool isBefore}) async {
+  Future<void> _showImageSourceSheet() async {
     final source = await showModalBottomSheet<ImageSource>(
       context: context,
       backgroundColor: MosaedColors.surfaceWhite,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20.r)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24.r)),
       ),
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.photo_library_outlined),
-              title: Text('mosaedPickFromGallery'.tr()),
-              onTap: () => Navigator.pop(context, ImageSource.gallery),
-            ),
-            ListTile(
-              leading: const Icon(Icons.photo_camera_outlined),
-              title: Text('mosaedTakePhoto'.tr()),
-              onTap: () => Navigator.pop(context, ImageSource.camera),
-            ),
-          ],
-        ),
-      ),
+      builder: (context) => const _AddPhotoSheet(),
     );
-    if (source == null) return;
+    if (source == null || !mounted) return;
 
     try {
       final picked = await _picker.pickImage(
@@ -146,13 +131,7 @@ class _CompletionFormUploadScreenState extends State<CompletionFormUploadScreen>
         imageQuality: 85,
       );
       if (picked == null) return;
-      setState(() {
-        if (isBefore) {
-          _beforeFile = File(picked.path);
-        } else {
-          _afterFile = File(picked.path);
-        }
-      });
+      setState(() => _pickedFile = File(picked.path));
     } catch (_) {
       if (!mounted) return;
       AppFunctions.showsToast(
@@ -163,9 +142,23 @@ class _CompletionFormUploadScreenState extends State<CompletionFormUploadScreen>
     }
   }
 
-  Future<void> _uploadBeforeImage() async {
-    if (_isFinished || !_workNotStarted) return;
-    if (_beforeFile == null) {
+  Future<void> _submit() async {
+    if (_isFinished) return;
+    final phase = _phase;
+
+    if (phase == CompletionUploadPhase.before) {
+      await _uploadBefore();
+      return;
+    }
+    if (phase == CompletionUploadPhase.after) {
+      await _uploadAfterThenMaybeFinish();
+      return;
+    }
+    await _finishJob();
+  }
+
+  Future<void> _uploadBefore() async {
+    if (_pickedFile == null) {
       AppFunctions.showsToast(
         'mosaedBeforeImageRequired'.tr(),
         MosaedColors.danger,
@@ -178,26 +171,18 @@ class _CompletionFormUploadScreenState extends State<CompletionFormUploadScreen>
     try {
       await context.read<ProviderOrdersRepository>().uploadPreviousWork(
             bookingId: _bookingId,
-            beforeImageFile: _beforeFile!,
+            beforeImageFile: _pickedFile!,
             kind: widget.kind,
           );
 
-      final completionForm = await context
-          .read<ProviderOrdersRepository>()
-          .getCompletionFormDetail(_bookingId, kind: widget.kind);
-
       if (!mounted) return;
-      setState(() {
-        _completionForm = completionForm;
-        _beforeFile = null;
-        _uploading = false;
-      });
-
+      setState(() => _uploading = false);
       AppFunctions.showsToast(
         'mosaedServiceStarted'.tr(),
         MosaedColors.success,
         context,
       );
+      Navigator.pop(context, true);
     } on ServerFailure catch (e) {
       if (!mounted) return;
       setState(() => _uploading = false);
@@ -213,9 +198,8 @@ class _CompletionFormUploadScreenState extends State<CompletionFormUploadScreen>
     }
   }
 
-  Future<void> _uploadAfterImage() async {
-    if (_isFinished || _workNotStarted) return;
-    if (_afterFile == null) {
+  Future<void> _uploadAfterThenMaybeFinish() async {
+    if (_pickedFile == null) {
       AppFunctions.showsToast(
         'mosaedAfterImageRequired'.tr(),
         MosaedColors.danger,
@@ -226,28 +210,35 @@ class _CompletionFormUploadScreenState extends State<CompletionFormUploadScreen>
 
     setState(() => _uploading = true);
     try {
-      await context.read<ProviderOrdersRepository>().updatePreviousWorkAfter(
-            bookingId: _bookingId,
-            afterImageFile: _afterFile!,
-            kind: widget.kind,
-          );
+      final repo = context.read<ProviderOrdersRepository>();
+      await repo.updatePreviousWorkAfter(
+        bookingId: _bookingId,
+        afterImageFile: _pickedFile!,
+        kind: widget.kind,
+      );
 
-      final completionForm = await context
-          .read<ProviderOrdersRepository>()
-          .getCompletionFormDetail(_bookingId, kind: widget.kind);
+      final notes = _notesController.text.trim().isNotEmpty
+          ? _notesController.text.trim()
+          : 'تم تنفيذ الخدمة بالكامل وتسليمها للعميل';
+
+      final updated = await repo.submitCompletionForm(
+        bookingId: _bookingId,
+        notes: notes,
+        isFinished: true,
+        kind: widget.kind,
+      );
 
       if (!mounted) return;
       setState(() {
-        _completionForm = completionForm;
-        _afterFile = null;
+        _completionForm = updated;
         _uploading = false;
       });
-
       AppFunctions.showsToast(
-        'mosaedPreviousWorkUploaded'.tr(),
+        'mosaedJobFinishedSuccessfully'.tr(),
         MosaedColors.success,
         context,
       );
+      Navigator.pop(context, true);
     } on ServerFailure catch (e) {
       if (!mounted) return;
       setState(() => _uploading = false);
@@ -264,16 +255,6 @@ class _CompletionFormUploadScreenState extends State<CompletionFormUploadScreen>
   }
 
   Future<void> _finishJob() async {
-    if (_isFinished) return;
-    if (!_readyToFinish) {
-      AppFunctions.showsToast(
-        'mosaedUploadBeforeAfterFirst'.tr(),
-        MosaedColors.danger,
-        context,
-      );
-      return;
-    }
-
     final notes = _notesController.text.trim().isNotEmpty
         ? _notesController.text.trim()
         : 'تم تنفيذ الخدمة بالكامل وتسليمها للعميل';
@@ -305,42 +286,101 @@ class _CompletionFormUploadScreenState extends State<CompletionFormUploadScreen>
     }
   }
 
+  bool get _busy => _uploading || _submitting;
+
+  bool get _canSubmit {
+    if (_busy || _isFinished) return false;
+    final phase = _phase;
+    if (phase == CompletionUploadPhase.finish) return true;
+    return _pickedFile != null;
+  }
+
+  String get _title {
+    final phase = _phase;
+    if (phase == CompletionUploadPhase.finish) {
+      return 'mosaedFinishJob'.tr();
+    }
+    return 'mosaedWorkPhotosUpload'.tr();
+  }
+
+  String get _heading {
+    switch (_phase) {
+      case CompletionUploadPhase.before:
+        return 'mosaedAddBeforeProblemPhotos'.tr();
+      case CompletionUploadPhase.after:
+        return 'mosaedAddAfterWorkPhotos'.tr();
+      case CompletionUploadPhase.finish:
+        return 'mosaedFinishJob'.tr();
+    }
+  }
+
+  String get _ctaLabel {
+    if (_busy) {
+      return _phase == CompletionUploadPhase.finish
+          ? 'mosaedFinishingJob'.tr()
+          : 'mosaedUploadingImage'.tr();
+    }
+    if (_phase == CompletionUploadPhase.after) {
+      return 'mosaedDeliverWork'.tr();
+    }
+    if (_phase == CompletionUploadPhase.finish) {
+      return 'mosaedFinishJob'.tr();
+    }
+    return 'mosaedUploadThePhoto'.tr();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: MosaedColors.background,
+      backgroundColor: MosaedColors.surfaceContainerLow,
       appBar: AppBar(
         backgroundColor: MosaedColors.surfaceWhite,
         elevation: 0,
+        centerTitle: true,
         leading: IconButton(
           onPressed: () => Navigator.pop(context),
           icon: Icon(
-            Icons.arrow_forward_rounded,
-            color: MosaedColors.primary,
-            size: 22.sp,
+            Icons.arrow_forward_ios_rounded,
+            color: MosaedColors.textPrimary,
+            size: 18.sp,
           ),
         ),
         title: Text(
-          widget.startOnFinishStep
-              ? 'mosaedFinishJob'.tr()
-              : 'mosaedWorkPhotosUpload'.tr(),
-          style: getBoldStyle(fontSize: 18.sp, color: MosaedColors.textPrimary),
+          _title,
+          style: getBoldStyle(fontSize: 16.sp, color: MosaedColors.textPrimary),
         ),
-        actions: [
-          IconButton(
-            onPressed: _loading ? null : _load,
-            icon: Icon(Icons.refresh_rounded, color: MosaedColors.primary),
-          ),
-        ],
+        bottom: PreferredSize(
+          preferredSize: Size.fromHeight(1.h),
+          child: const Divider(height: 1, color: MosaedColors.fieldBorder),
+        ),
       ),
       body: _buildBody(),
+      bottomNavigationBar: _loading || _error != null || _isFinished
+          ? null
+          : Container(
+              padding: EdgeInsets.fromLTRB(16.w, 8.h, 16.w, 16.h),
+              decoration: const BoxDecoration(
+                color: MosaedColors.surfaceWhite,
+                border: Border(
+                  top: BorderSide(color: MosaedColors.fieldBorder),
+                ),
+              ),
+              child: SafeArea(
+                top: false,
+                child: MosaedPrimaryButton(
+                  text: _ctaLabel,
+                  isLoading: _busy,
+                  onPressed: _canSubmit ? _submit : null,
+                ),
+              ),
+            ),
     );
   }
 
   Widget _buildBody() {
     if (_loading) {
       return const Center(
-        child: CircularProgressIndicator(color: MosaedColors.primaryContainer),
+        child: CircularProgressIndicator(color: MosaedColors.brand),
       );
     }
 
@@ -351,8 +391,6 @@ class _CompletionFormUploadScreenState extends State<CompletionFormUploadScreen>
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.cloud_off_rounded, size: 48.sp, color: MosaedColors.textHint),
-              SizedBox(height: 12.h),
               Text(
                 _error ?? 'mosaedCompletionFormLoadError'.tr(),
                 textAlign: TextAlign.center,
@@ -362,274 +400,360 @@ class _CompletionFormUploadScreenState extends State<CompletionFormUploadScreen>
                 ),
               ),
               SizedBox(height: 16.h),
-              TextButton.icon(
-                onPressed: _load,
-                icon: const Icon(Icons.refresh_rounded),
-                label: Text('mosaedRetry'.tr()),
-              ),
+              TextButton(onPressed: _load, child: Text('mosaedRetry'.tr())),
             ],
           ),
         ),
       );
     }
 
-    final finished = _isFinished;
-
-    return RefreshIndicator(
-      onRefresh: _load,
-      color: MosaedColors.primary,
-      child: ListView(
-        padding: EdgeInsets.all(20.w),
-        children: [
-          if (widget.serviceTitle?.trim().isNotEmpty == true) ...[
-            Text(
-              widget.serviceTitle!,
-              style: getBoldStyle(fontSize: 16.sp, color: MosaedColors.textPrimary),
-            ),
-            SizedBox(height: 4.h),
-            Text(
-              '#${_bookingId.length > 8 ? _bookingId.substring(0, 8) : _bookingId}',
-              style: getRegularStyle(
-                fontSize: 12.sp,
-                color: MosaedColors.textSecondary,
-              ),
-            ),
-            SizedBox(height: 16.h),
-          ],
-
-          if (_workNotStarted && !finished) ...[
-            Text(
-              'mosaedUploadBeforeStep'.tr(),
-              style: getBoldStyle(fontSize: 16.sp, color: MosaedColors.textPrimary),
-            ),
-            SizedBox(height: 8.h),
-            Text(
-              'mosaedUploadBeforeStepHint'.tr(),
-              style: getRegularStyle(
-                fontSize: 13.sp,
-                color: MosaedColors.textSecondary,
-              ),
-            ),
-            SizedBox(height: 16.h),
-            InkWell(
-              onTap: _uploading ? null : () => _showImageSourceSheet(isBefore: true),
-              borderRadius: BorderRadius.circular(16.r),
-              child: _imageCard(
-                label: 'mosaedBefore'.tr(),
-                networkUrl: null,
-                localFile: _beforeFile,
-              ),
-            ),
-            SizedBox(height: 16.h),
-            MosaedPrimaryButton(
-              text: _uploading
-                  ? 'mosaedUploadingImage'.tr()
-                  : 'mosaedUploadBeforeImage'.tr(),
-              isLoading: _uploading,
-              onPressed: _uploading ? null : _uploadBeforeImage,
-            ),
-          ],
-
-          if (_needsAfterUpdate) ...[
-            Text(
-              'mosaedUploadAfterStep'.tr(),
-              style: getBoldStyle(fontSize: 16.sp, color: MosaedColors.textPrimary),
-            ),
-            SizedBox(height: 8.h),
-            Text(
-              'mosaedUploadAfterStepHint'.tr(),
-              style: getRegularStyle(
-                fontSize: 13.sp,
-                color: MosaedColors.textSecondary,
-              ),
-            ),
-            SizedBox(height: 16.h),
-            Row(
-              children: [
-                Expanded(
-                  child: _imageCard(
-                    label: 'mosaedBefore'.tr(),
-                    networkUrl: _displayBefore,
-                    localFile: null,
-                  ),
-                ),
-                SizedBox(width: 12.w),
-                Expanded(
-                  child: InkWell(
-                    onTap: _uploading ? null : () => _showImageSourceSheet(isBefore: false),
-                    borderRadius: BorderRadius.circular(16.r),
-                    child: _imageCard(
-                      label: 'mosaedAfter'.tr(),
-                      networkUrl: null,
-                      localFile: _afterFile,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            SizedBox(height: 16.h),
-            MosaedPrimaryButton(
-              text: _uploading
-                  ? 'mosaedUploadingImage'.tr()
-                  : 'mosaedUploadAfterImage'.tr(),
-              isLoading: _uploading,
-              onPressed: _uploading ? null : _uploadAfterImage,
-            ),
-          ],
-
-          if (_hasBothImages || finished) ...[
-            Text(
-              'mosaedWorkImages'.tr(),
-              style: getBoldStyle(fontSize: 16.sp, color: MosaedColors.textPrimary),
-            ),
-            SizedBox(height: 12.h),
-            Row(
-              children: [
-                Expanded(
-                  child: _imageCard(
-                    label: 'mosaedBefore'.tr(),
-                    networkUrl: _displayBefore,
-                    localFile: null,
-                  ),
-                ),
-                SizedBox(width: 12.w),
-                Expanded(
-                  child: _imageCard(
-                    label: 'mosaedAfter'.tr(),
-                    networkUrl: _displayAfter,
-                    localFile: null,
-                  ),
-                ),
-              ],
-            ),
-          ],
-
-          if (!finished && _readyToFinish) ...[
-            SizedBox(height: 20.h),
-            Text(
-              'mosaedCompletionNotes'.tr(),
-              style: getBoldStyle(fontSize: 15.sp, color: MosaedColors.textPrimary),
-            ),
-            SizedBox(height: 8.h),
-            TextField(
-              controller: _notesController,
-              maxLines: 4,
-              decoration: InputDecoration(
-                hintText: 'mosaedCompletionNotesHint'.tr(),
-                filled: true,
-                fillColor: MosaedColors.inputFill,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(14.r),
-                  borderSide: BorderSide.none,
-                ),
-              ),
-            ),
-            SizedBox(height: 16.h),
-            MosaedPrimaryButton(
-              text: _submitting
-                  ? 'mosaedFinishingJob'.tr()
-                  : 'mosaedFinishJob'.tr(),
-              isLoading: _submitting,
-              onPressed: (_submitting || _uploading) ? null : _finishJob,
-            ),
-          ],
-
-          if (finished) ...[
-            SizedBox(height: 16.h),
-            Container(
-              width: double.infinity,
-              padding: EdgeInsets.all(14.w),
-              decoration: BoxDecoration(
-                color: MosaedColors.success.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(14.r),
-                border: Border.all(
-                  color: MosaedColors.success.withValues(alpha: 0.3),
-                ),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.check_circle, color: MosaedColors.success),
-                  SizedBox(width: 10.w),
-                  Expanded(
-                    child: Text(
-                      'mosaedJobAlreadyFinished'.tr(),
-                      style: getMediumStyle(
-                        fontSize: 14.sp,
-                        color: MosaedColors.success,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-          SizedBox(height: 24.h),
-        ],
-      ),
-    );
-  }
-
-  Widget _imageCard({
-    required String label,
-    required String? networkUrl,
-    required File? localFile,
-  }) {
-    return Container(
-      height: 180.h,
-      decoration: BoxDecoration(
-        color: MosaedColors.surfaceWhite,
-        borderRadius: BorderRadius.circular(16.r),
-        border: Border.all(color: MosaedColors.border),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          if (localFile != null)
-            Image.file(localFile, fit: BoxFit.cover)
-          else if (networkUrl != null && networkUrl.isNotEmpty)
-            Image.network(
-              networkUrl,
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => _imagePlaceholder(label),
-            )
-          else
-            _imagePlaceholder(label),
-          Positioned(
-            left: 8.w,
-            right: 8.w,
-            bottom: 8.h,
-            child: Container(
-              padding: EdgeInsets.symmetric(horizontal: 8.w, vertical: 4.h),
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.55),
-                borderRadius: BorderRadius.circular(10.r),
-              ),
-              child: Text(
-                label,
-                textAlign: TextAlign.center,
-                style: getMediumStyle(fontSize: 12.sp, color: Colors.white),
-              ),
+    if (_isFinished) {
+      return Center(
+        child: Padding(
+          padding: EdgeInsets.all(24.w),
+          child: Text(
+            'mosaedJobAlreadyFinished'.tr(),
+            textAlign: TextAlign.center,
+            style: getMediumStyle(
+              fontSize: 14.sp,
+              color: MosaedColors.success,
             ),
           ),
-        ],
-      ),
-    );
-  }
+        ),
+      );
+    }
 
-  Widget _imagePlaceholder(String label) {
-    return Container(
-      color: MosaedColors.primaryFixed,
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.add_a_photo_outlined, color: MosaedColors.primary, size: 28.sp),
-          SizedBox(height: 8.h),
+    final phase = _phase;
+    final showPicker = phase == CompletionUploadPhase.before ||
+        phase == CompletionUploadPhase.after;
+    final showNotes = _pickedFile != null ||
+        phase == CompletionUploadPhase.finish ||
+        phase == CompletionUploadPhase.after;
+
+    return ListView(
+      padding: EdgeInsets.fromLTRB(16.w, 20.h, 16.w, 24.h),
+      children: [
+        Text(
+          _heading,
+          style: getBoldStyle(fontSize: 18.sp, color: MosaedColors.textPrimary),
+        ),
+        if (showPicker) ...[
+          SizedBox(height: 16.h),
+          _PhotoDropZone(
+            file: _pickedFile,
+            sectionLabel: phase == CompletionUploadPhase.before
+                ? 'mosaedProblemPhotos'.tr()
+                : 'mosaedWorkImages'.tr(),
+            onTap: _busy ? null : _showImageSourceSheet,
+            onClear: _busy
+                ? null
+                : () => setState(() => _pickedFile = null),
+          ),
+        ],
+        if (showNotes) ...[
+          SizedBox(height: 20.h),
           Text(
-            label,
-            style: getMediumStyle(fontSize: 12.sp, color: MosaedColors.primary),
+            'mosaedIHaveANote'.tr(),
+            style: getBoldStyle(
+              fontSize: 15.sp,
+              color: MosaedColors.textPrimary,
+            ),
+          ),
+          SizedBox(height: 10.h),
+          TextField(
+            controller: _notesController,
+            maxLines: 5,
+            enabled: !_busy,
+            decoration: InputDecoration(
+              hintText: 'mosaedWriteYourNotes'.tr(),
+              hintStyle: getRegularStyle(
+                fontSize: 13.sp,
+                color: MosaedColors.textHint,
+              ),
+              filled: true,
+              fillColor: MosaedColors.surfaceWhite,
+              contentPadding: EdgeInsets.all(14.w),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14.r),
+                borderSide: const BorderSide(color: MosaedColors.fieldBorder),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14.r),
+                borderSide: const BorderSide(color: MosaedColors.fieldBorder),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14.r),
+                borderSide: const BorderSide(color: MosaedColors.brand),
+              ),
+            ),
           ),
         ],
+      ],
+    );
+  }
+}
+
+class _PhotoDropZone extends StatelessWidget {
+  const _PhotoDropZone({
+    required this.file,
+    required this.sectionLabel,
+    this.onTap,
+    this.onClear,
+  });
+
+  final File? file;
+  final String sectionLabel;
+  final VoidCallback? onTap;
+  final VoidCallback? onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasFile = file != null;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          sectionLabel,
+          style: getMediumStyle(
+            fontSize: 13.sp,
+            color: MosaedColors.textSecondary,
+          ),
+        ),
+        SizedBox(height: 8.h),
+        Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: hasFile ? null : onTap,
+            borderRadius: BorderRadius.circular(16.r),
+            child: CustomPaint(
+              painter: hasFile
+                  ? null
+                  : _DashedRRectPainter(
+                      color: MosaedColors.brand.withValues(alpha: 0.55),
+                      radius: 16.r,
+                    ),
+              child: Container(
+                width: double.infinity,
+                height: 200.h,
+                decoration: BoxDecoration(
+                  color: hasFile
+                      ? MosaedColors.surfaceWhite
+                      : MosaedColors.brand.withValues(alpha: 0.04),
+                  borderRadius: BorderRadius.circular(16.r),
+                  border: hasFile
+                      ? Border.all(color: MosaedColors.fieldBorder)
+                      : null,
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: hasFile
+                    ? Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          Image.file(file!, fit: BoxFit.cover),
+                          if (onClear != null)
+                            Positioned(
+                              top: 10.h,
+                              right: 10.w,
+                              child: InkWell(
+                                onTap: onClear,
+                                borderRadius: BorderRadius.circular(20.r),
+                                child: Container(
+                                  width: 28.w,
+                                  height: 28.w,
+                                  decoration: BoxDecoration(
+                                    color: Colors.black.withValues(alpha: 0.55),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: Icon(
+                                    Icons.close_rounded,
+                                    color: Colors.white,
+                                    size: 16.sp,
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                      )
+                    : Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          SvgPicture.asset(
+                            ImageAssets.image02,
+                            width: 40.w,
+                            height: 40.w,
+                            colorFilter: const ColorFilter.mode(
+                              MosaedColors.brand,
+                              BlendMode.srcIn,
+                            ),
+                          ),
+                          SizedBox(height: 10.h),
+                          Text(
+                            'mosaedAddPhoto'.tr(),
+                            style: getBoldStyle(
+                              fontSize: 14.sp,
+                              color: MosaedColors.brand,
+                            ),
+                          ),
+                          SizedBox(height: 6.h),
+                          Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 24.w),
+                            child: Text(
+                              'mosaedSupportedImageFormats'.tr(),
+                              textAlign: TextAlign.center,
+                              style: getRegularStyle(
+                                fontSize: 11.sp,
+                                color: MosaedColors.textHint,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _DashedRRectPainter extends CustomPainter {
+  _DashedRRectPainter({required this.color, required this.radius});
+
+  final Color color;
+  final double radius;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+
+    final path = Path()
+      ..addRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(0, 0, size.width, size.height),
+          Radius.circular(radius),
+        ),
+      );
+
+    const dashWidth = 6.0;
+    const dashSpace = 4.0;
+    for (final metric in path.computeMetrics()) {
+      var distance = 0.0;
+      while (distance < metric.length) {
+        final next = distance + dashWidth;
+        canvas.drawPath(
+          metric.extractPath(distance, next.clamp(0, metric.length)),
+          paint,
+        );
+        distance = next + dashSpace;
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _DashedRRectPainter oldDelegate) =>
+      oldDelegate.color != color || oldDelegate.radius != radius;
+}
+
+class _AddPhotoSheet extends StatelessWidget {
+  const _AddPhotoSheet();
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(16.w, 12.h, 16.w, 20.h),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40.w,
+              height: 4.h,
+              decoration: BoxDecoration(
+                color: MosaedColors.fieldBorder,
+                borderRadius: BorderRadius.circular(4.r),
+              ),
+            ),
+            SizedBox(height: 16.h),
+            Text(
+              'mosaedAddPhotoTitle'.tr(),
+              style: getBoldStyle(
+                fontSize: 16.sp,
+                color: MosaedColors.textPrimary,
+              ),
+            ),
+            SizedBox(height: 16.h),
+            _SheetOption(
+              svgAsset: ImageAssets.cameraIcon,
+              label: 'mosaedTakePhoto'.tr(),
+              onTap: () => Navigator.pop(context, ImageSource.camera),
+            ),
+            SizedBox(height: 10.h),
+            _SheetOption(
+              svgAsset: ImageAssets.image02,
+              label: 'mosaedPickFromGallery'.tr(),
+              onTap: () => Navigator.pop(context, ImageSource.gallery),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SheetOption extends StatelessWidget {
+  const _SheetOption({
+    required this.svgAsset,
+    required this.label,
+    required this.onTap,
+  });
+
+  final String svgAsset;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: MosaedColors.surfaceWhite,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14.r),
+        child: Container(
+          width: double.infinity,
+          padding: EdgeInsets.symmetric(horizontal: 14.w, vertical: 14.h),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14.r),
+            border: Border.all(color: MosaedColors.brand.withValues(alpha: 0.35)),
+          ),
+          child: Row(
+            children: [
+              SvgPicture.asset(
+                svgAsset,
+                width: 22.w,
+                height: 22.w,
+                colorFilter: const ColorFilter.mode(
+                  MosaedColors.brand,
+                  BlendMode.srcIn,
+                ),
+              ),
+              SizedBox(width: 12.w),
+              Expanded(
+                child: Text(
+                  label,
+                  style: getMediumStyle(
+                    fontSize: 14.sp,
+                    color: MosaedColors.textPrimary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

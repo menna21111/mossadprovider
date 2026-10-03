@@ -43,6 +43,7 @@ class Booking {
     required this.rawStatus,
     required this.status,
     this.scheduledDate,
+    this.createdAt,
     this.notes,
     required this.totalCost,
     required this.paymentReceived,
@@ -51,10 +52,13 @@ class Booking {
     this.paymentStatus,
     this.customerName,
     this.customerPhone,
+    this.customerAvatar,
     this.providerName,
     required this.providerRating,
     required this.providerReviews,
     required this.addressText,
+    this.lat,
+    this.lng,
     this.arrivedAt,
     this.finishedAt,
     required this.items,
@@ -70,6 +74,7 @@ class Booking {
   final String rawStatus;
   final OrderStatus status;
   final String? scheduledDate;
+  final String? createdAt;
   final String? notes;
   final double totalCost;
   final bool paymentReceived;
@@ -78,10 +83,13 @@ class Booking {
   final String? paymentStatus;
   final String? customerName;
   final String? customerPhone;
+  final String? customerAvatar;
   final String? providerName;
   final double providerRating;
   final int providerReviews;
   final String addressText;
+  final double? lat;
+  final double? lng;
   final String? arrivedAt;
   final String? finishedAt;
   final List<BookingItem> items;
@@ -136,6 +144,7 @@ class Booking {
       rawStatus: rawStatus,
       status: status,
       scheduledDate: json['scheduled_date']?.toString(),
+      createdAt: json['created_at']?.toString(),
       notes: json['notes']?.toString(),
       totalCost: _toDouble(
         json['final_cost'] ?? json['total_cost'] ?? json['agreed_amount'],
@@ -144,8 +153,14 @@ class Booking {
       paymentTime: paymentRaw?.toString(),
       paymentRequestId: paymentRequestId,
       paymentStatus: paymentStatus,
-      customerName: json['customer_name']?.toString(),
-      customerPhone: json['customer_phone']?.toString(),
+      customerName: json['customer_name']?.toString() ??
+          _asMap(json['customer'])?['name']?.toString(),
+      customerPhone: json['customer_phone']?.toString() ??
+          _asMap(json['customer'])?['phone']?.toString(),
+      customerAvatar: json['customer_avatar']?.toString() ??
+          _asMap(json['customer'])?['avatar']?.toString() ??
+          _asMap(json['customer'])?['photo']?.toString() ??
+          _asMap(json['customer'])?['image']?.toString(),
       providerName: provider?['provider_name']?.toString() ??
           provider?['name']?.toString() ??
           json['provider_name']?.toString(),
@@ -159,6 +174,8 @@ class Booking {
           ) ??
           0,
       addressText: _formatAddress(address, json),
+      lat: _parseCoord(address?['lat'] ?? json['lat']),
+      lng: _parseCoord(address?['lng'] ?? json['lng']),
       arrivedAt: arrivedRaw?.toString(),
       finishedAt: finishedRaw?.toString(),
       items: items,
@@ -215,6 +232,13 @@ class Booking {
     return double.tryParse(value?.toString() ?? '') ?? 0;
   }
 
+  static double? _parseCoord(dynamic value) {
+    if (value == null) return null;
+    final parsed = double.tryParse(value.toString().trim());
+    if (parsed == null || parsed == 0) return null;
+    return parsed;
+  }
+
   static bool _isPaid(Map<String, dynamic> json) {
     if (json['payment_received'] == true ||
         json['is_paid'] == true ||
@@ -260,18 +284,24 @@ class Booking {
 
   static String _formatAddress(Map<String, dynamic>? address, Map<String, dynamic> json) {
     if (address != null) {
+      final city = (address['city_name'] ?? address['city'])?.toString();
+      final region = (address['region_name'] ?? address['region'])?.toString();
+      final district = address['district']?.toString();
       final parts = <String>[
-        if (address['label'] != null) address['label'].toString(),
-        if (address['city_name'] != null) address['city_name'].toString(),
-        if (address['region_name'] != null) address['region_name'].toString(),
-        if (address['district'] != null) address['district'].toString(),
-        if (address['street'] != null) address['street'].toString(),
-        if (address['building_no'] != null)
+        if ((address['label']?.toString() ?? '').trim().isNotEmpty)
+          address['label'].toString(),
+        if ((city ?? '').trim().isNotEmpty) city!,
+        if ((district ?? '').trim().isNotEmpty) district!,
+        if ((region ?? '').trim().isNotEmpty) region!,
+        if ((address['street']?.toString() ?? '').trim().isNotEmpty)
+          address['street'].toString(),
+        if ((address['building_no']?.toString() ?? '').trim().isNotEmpty)
           'مبنى ${address['building_no']}',
-        if (address['floor_no'] != null) 'دور ${address['floor_no']}',
-        if (address['apartment_no'] != null)
+        if ((address['floor_no']?.toString() ?? '').trim().isNotEmpty)
+          'دور ${address['floor_no']}',
+        if ((address['apartment_no']?.toString() ?? '').trim().isNotEmpty)
           'شقة ${address['apartment_no']}',
-      ].where((p) => p.trim().isNotEmpty).toList();
+      ];
       if (parts.isNotEmpty) return parts.join(' • ');
     }
     return json['address_text']?.toString() ?? '';

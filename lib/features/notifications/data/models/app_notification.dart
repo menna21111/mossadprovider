@@ -1,3 +1,5 @@
+import '../../../../core/constants/assets_manager.dart';
+
 class AppNotification {
   const AppNotification({
     required this.id,
@@ -21,6 +23,58 @@ class AppNotification {
 
   String? get requestId => data['request_id']?.toString();
   String? get offerId => data['offer_id']?.toString();
+  String? get bookingId => data['booking_id']?.toString();
+  String? get requestTitle => data['title']?.toString();
+
+  String get normalizedEvent => event.toLowerCase().trim();
+
+  /// Icon for the notifications list — keyed off [event], otherwise messages.
+  String get eventIcon {
+    switch (normalizedEvent) {
+      case 'new_chat_message':
+        return ImageAssets.messages;
+      case 'new_custom_request':
+        return ImageAssets.offers;
+      case 'new_offer':
+        return ImageAssets.offers;
+      case 'offer_accepted':
+        return ImageAssets.verifyWhite;
+      case 'offer_rejected':
+      case 'offer_cancelled':
+        return ImageAssets.alertIcon;
+      case 'due_payment_required':
+        return ImageAssets.card;
+      case 'booking_assigned':
+      case 'booking_status_changed':
+      case 'new_booking':
+        return ImageAssets.taskIcon;
+      case 'account_unblocked':
+        return ImageAssets.verifyWhite;
+      default:
+        if (normalizedEvent.contains('chat') ||
+            normalizedEvent.contains('message')) {
+          return ImageAssets.messages;
+        }
+        if (normalizedEvent.contains('payment') ||
+            normalizedEvent.contains('due') ||
+            normalizedEvent.contains('wallet')) {
+          return ImageAssets.card;
+        }
+        if (normalizedEvent.contains('offer')) {
+          return ImageAssets.offers;
+        }
+        if (normalizedEvent.contains('booking') ||
+            normalizedEvent.contains('order')) {
+          return ImageAssets.taskIcon;
+        }
+        if (normalizedEvent.contains('custom_request')) {
+          return ImageAssets.offers;
+        }
+        return ImageAssets.messages;
+    }
+  }
+
+  bool get eventIconIsSvg => eventIcon.toLowerCase().endsWith('.svg');
 
   factory AppNotification.fromJson(Map<String, dynamic> json) {
     final dataRaw = json['data'];
@@ -55,6 +109,8 @@ class AppNotification {
     const keys = [
       'request_id',
       'offer_id',
+      'booking_id',
+      'title',
       'provider_name',
       'sender_type',
       'description_preview',

@@ -17,6 +17,11 @@ class ProviderDueLockState extends Equatable {
   final String blockedAt;
   final String currentPaymentLink;
 
+  bool get hasOutstanding {
+    final value = double.tryParse(outstandingAmount.trim()) ?? 0;
+    return value > 0;
+  }
+
   ProviderDueLockState copyWith({
     bool? loading,
     String? errorMessage,

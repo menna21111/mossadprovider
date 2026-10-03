@@ -22,6 +22,7 @@ import 'features/notifications/data/notifications_repository.dart';
 import 'features/notifications/presentation/cubit/notification_cubit.dart';
 import 'features/orders/data/provider_orders_repository.dart';
 import 'features/services/data/services_repository.dart';
+import 'features/payments/data/bank_accounts_repository.dart';
 import 'features/payments/data/provider_dues_repository.dart';
 import 'features/payments/data/provider_wallet_repository.dart';
 import 'features/payments/presentation/cubit/provider_due_lock_cubit.dart';
@@ -71,6 +72,7 @@ void main() async {
           RepositoryProvider(create: (_) => ProviderOrdersRepository()),
           RepositoryProvider(create: (_) => ProviderWalletRepository()),
           RepositoryProvider(create: (_) => ProviderDuesRepository()),
+          RepositoryProvider(create: (_) => BankAccountsRepository()),
           RepositoryProvider(create: (_) => NotificationsRepository()),
           RepositoryProvider(create: (_) => ChatRepository()),
         ],

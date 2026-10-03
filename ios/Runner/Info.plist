@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Mosaedprovider</string>
+	<string>مساعد ـ الفني</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -15,7 +15,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>mosaedprovider</string>
+	<string>مساعد ـ الفني</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -53,10 +53,14 @@
 	<string>Mosaed Provider uses Face ID to securely unlock your account.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Mosaed needs your location to set your service address on the map.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Mosaed needs microphone access so you can send voice messages in chat.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Mosaed needs access to your photos to upload your contract image.</string>
+	<string>Mosaed needs access to your photos to upload images in chat and for your profile documents.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>Mosaed needs camera access to take a photo of your contract.</string>
+	<string>Mosaed needs camera access to take photos in chat and for your profile documents.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Mosaed may save images you capture to your photo library.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>

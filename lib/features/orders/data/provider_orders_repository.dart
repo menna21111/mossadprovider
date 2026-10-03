@@ -36,6 +36,37 @@ class ProviderOrdersRepository {
     }
   }
 
+  Future<List<Booking>> getProviderBookings() async {
+    try {
+      final response = await DioHelper.getData(
+        url: AppConstants.providerBookings,
+      );
+
+      log(
+        '[ProviderOrders] bookings list:\n${jsonEncode(response.data)}',
+        name: 'ProviderOrdersRepository',
+      );
+
+      final rawItems =
+          response.data is List ? response.data : DynamicJsonModel.parseList(response.data);
+      final bookings = <Booking>[];
+      for (final item in rawItems) {
+        Map<String, dynamic>? map;
+        if (item is Map<String, dynamic>) {
+          map = item;
+        } else if (item is Map) {
+          map = item.map((k, v) => MapEntry(k.toString(), v));
+        }
+        if (map == null) continue;
+        final booking = Booking.fromJson(map);
+        if (booking.id.isNotEmpty) bookings.add(booking);
+      }
+      return bookings;
+    } on DioException catch (e) {
+      throw ServerFailure.fromDioError(e);
+    }
+  }
+
   Future<List<CompletionForm>> getCompletionForms({
     String? status,
     String? dateFrom,
@@ -56,10 +87,11 @@ class ProviderOrdersRepository {
         name: 'ProviderOrdersRepository',
       );
 
-      return _parseCompletionForms(
+      final forms = _parseCompletionForms(
         response.data,
         kind: CompletionFormKind.booking,
       );
+      return _withExistedServiceImages(forms);
     } on DioException catch (e) {
       throw ServerFailure.fromDioError(e);
     }
@@ -119,14 +151,103 @@ class ProviderOrdersRepository {
     dynamic data, {
     required CompletionFormKind kind,
   }) {
-    final maps = data is List
-        ? (data as List).whereType<Map<String, dynamic>>().toList()
-        : DynamicJsonModel.parseList(data);
+    final rawItems = data is List ? data : DynamicJsonModel.parseList(data);
+    final maps = <Map<String, dynamic>>[];
+    for (final item in rawItems) {
+      if (item is Map<String, dynamic>) {
+        maps.add(item);
+      } else if (item is Map) {
+        maps.add(item.map((k, v) => MapEntry(k.toString(), v)));
+      }
+    }
 
     return maps
         .map((json) => CompletionForm.fromJson(json, kind: kind))
         .where((form) => form.id.isNotEmpty || form.bookingId.isNotEmpty)
         .toList();
+  }
+
+  Future<List<CompletionForm>> _withExistedServiceImages(
+    List<CompletionForm> forms,
+  ) async {
+    final needsImage = forms.any((form) {
+      if (form.isCustomRequest) return false;
+      return (form.cardImage ?? '').trim().isEmpty;
+    });
+    if (!needsImage) return forms;
+
+    final imagesByTitle = await _existedServiceImagesByTitle();
+    if (imagesByTitle.isEmpty) return forms;
+
+    return forms.map((form) {
+      if (form.isCustomRequest) return form;
+      if ((form.cardImage ?? '').trim().isNotEmpty) return form;
+      final image = _imageForServiceTitle(form.serviceTitle, imagesByTitle);
+      if (image == null) return form;
+      return form.copyWith(serviceImage: image);
+    }).toList();
+  }
+
+  Future<Map<String, String>> _existedServiceImagesByTitle() async {
+    final byTitle = <String, String>{};
+    try {
+      final response = await DioHelper.getData(
+        url: AppConstants.existedServices,
+      );
+      final raw = response.data is List
+          ? response.data
+          : DynamicJsonModel.parseList(response.data);
+      for (final item in raw) {
+        Map<String, dynamic>? map;
+        if (item is Map<String, dynamic>) {
+          map = item;
+        } else if (item is Map) {
+          map = item.map((key, value) => MapEntry(key.toString(), value));
+        }
+        if (map == null) continue;
+        final title = (map['title'] ?? map['name'] ?? '').toString().trim();
+        final image = (map['image'] ?? map['cover'] ?? map['photo'])
+            ?.toString()
+            .trim();
+        if (title.isEmpty ||
+            image == null ||
+            image.isEmpty ||
+            image.toLowerCase() == 'null') {
+          continue;
+        }
+        byTitle[title] = image;
+      }
+    } catch (_) {}
+
+    if (byTitle.isNotEmpty) return byTitle;
+
+    try {
+      final bookings = await getProviderBookings();
+      for (final booking in bookings) {
+        final title = booking.serviceTitle.trim();
+        final image = booking.serviceImage?.trim();
+        if (title.isEmpty || image == null || image.isEmpty) continue;
+        byTitle[title] = image;
+      }
+    } catch (_) {}
+
+    return byTitle;
+  }
+
+  String? _imageForServiceTitle(
+    String? title,
+    Map<String, String> imagesByTitle,
+  ) {
+    final key = (title ?? '').trim();
+    if (key.isEmpty) return null;
+    final exact = imagesByTitle[key];
+    if (exact != null && exact.isNotEmpty) return exact;
+    for (final entry in imagesByTitle.entries) {
+      if (entry.key.contains(key) || key.contains(entry.key)) {
+        return entry.value;
+      }
+    }
+    return null;
   }
 
   Future<CompletionForm> getCompletionFormDetail(
@@ -149,11 +270,17 @@ class ProviderOrdersRepository {
           ? response.data as Map<String, dynamic>
           : <String, dynamic>{};
       if (data.isNotEmpty) {
-        return CompletionForm.fromJson(
+        var form = CompletionForm.fromJson(
           data,
           kind: kind,
           preferredWorkId: workId,
         );
+        if (!form.isCustomRequest && (form.cardImage ?? '').trim().isEmpty) {
+          final images = await _existedServiceImagesByTitle();
+          final image = _imageForServiceTitle(form.serviceTitle, images);
+          if (image != null) form = form.copyWith(serviceImage: image);
+        }
+        return form;
       }
 
       if (kind == CompletionFormKind.customRequest) {
@@ -345,10 +472,18 @@ class ProviderOrdersRepository {
     }
   }
 
-  Future<List<ProviderCustomRequest>> getProviderCustomRequests() async {
+  Future<List<ProviderCustomRequest>> getProviderCustomRequests({
+    double? lat,
+    double? lng,
+  }) async {
     try {
+      final query = <String, dynamic>{};
+      if (lat != null) query['lat'] = lat;
+      if (lng != null) query['lng'] = lng;
+
       final response = await DioHelper.getData(
         url: AppConstants.providerCustomRequests,
+        query: query.isEmpty ? null : query,
       );
 
       log(
@@ -378,8 +513,8 @@ class ProviderOrdersRepository {
         name: 'ProviderOrdersRepository',
       );
 
-      final data = response.data is Map<String, dynamic>
-          ? response.data as Map<String, dynamic>
+      final data = response.data is Map
+          ? Map<String, dynamic>.from(response.data as Map)
           : <String, dynamic>{};
       return ProviderCustomRequest.fromJson(data);
     } on DioException catch (e) {

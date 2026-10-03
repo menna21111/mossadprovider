@@ -5,318 +5,383 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:page_transition/page_transition.dart';
 
 import '../../../app/functions.dart';
+import '../../../core/constants/assets_manager.dart';
 import '../../../core/constants/mosaed_colors.dart';
-import '../../../core/constants/styles_manager.dart';
-import '../../../core/network/failure.dart';
-import '../../../core/widgets/home_shimmer.dart';
-import '../../../core/widgets/service_thumbnail.dart';
+import '../../../core/utils/geo_distance.dart';
 import '../../auth/data/auth_repository.dart';
-import '../../custom_service/presentation/custom_service_screen.dart';
-import '../../custom_service/presentation/widgets/custom_service_home_card.dart';
-import '../../services/data/models/existed_service.dart';
-import '../../services/data/services_repository.dart';
-import '../../services/presentation/service_detail_screen.dart';
+import '../../custom_service/presentation/custom_request_detail_screen.dart';
+import '../../custom_service/presentation/widgets/request_format_helpers.dart';
+import '../../notifications/presentation/notifications_screen.dart';
+import '../../orders/data/completion_form_model.dart';
+import '../../orders/data/provider_custom_request_model.dart';
+import '../../orders/data/provider_offer_model.dart';
+import '../../orders/data/provider_orders_repository.dart';
+import '../../orders/presentation/task_detail_screen.dart';
+import 'widgets/home_dues_warning_banner.dart';
+import 'widgets/home_error_body.dart';
+import 'widgets/home_header.dart';
+import 'widgets/home_relative_time.dart';
+import 'widgets/home_section_header.dart';
+import 'widgets/home_summary_section.dart';
+import 'widgets/home_work_card.dart';
+import 'widgets/home_work_list.dart';
 
 class HomeTab extends StatefulWidget {
-  const HomeTab({super.key});
+  const HomeTab({
+    super.key,
+    this.onOpenRequests,
+    this.onOpenTasks,
+    this.onOpenOffers,
+  });
+
+  final VoidCallback? onOpenRequests;
+  final VoidCallback? onOpenTasks;
+  final VoidCallback? onOpenOffers;
 
   @override
-  State<HomeTab> createState() => _HomeTabState();
+  State<HomeTab> createState() => HomeTabState();
 }
 
-class _HomeTabState extends State<HomeTab> {
-  List<ExistedService> _services = [];
+class HomeTabState extends State<HomeTab> {
+  List<ProviderCustomRequest> _nearby = const [];
+  List<ProviderOffer> _pendingOffers = const [];
+  List<CompletionForm> _activeJobs = const [];
+  String? _avatarUrl;
+  double? _providerLat;
+  double? _providerLng;
   bool _loading = true;
   String? _error;
 
   @override
   void initState() {
     super.initState();
-    _loadServices();
+    WidgetsBinding.instance.addPostFrameCallback((_) => reload());
   }
 
-  Future<void> _loadServices() async {
+  Future<void> reload() async {
+    if (!mounted) return;
     setState(() {
       _loading = true;
       _error = null;
     });
+
+    final ordersRepo = context.read<ProviderOrdersRepository>();
+    final authRepo = context.read<AuthRepository>();
     try {
-      final services =
-          await context.read<ServicesRepository>().getExistedServices();
-      if (mounted) {
-        setState(() {
-          _services = services;
-          _loading = false;
+      String? avatarUrl;
+      double? providerLat;
+      double? providerLng;
+      try {
+        final profile = await authRepo.getProviderProfile();
+        avatarUrl = profile.avatar;
+        if (profile.addresses.isNotEmpty) {
+          final address = profile.addresses.first;
+          providerLat = parseCoord(address.lat);
+          providerLng = parseCoord(address.lng);
+        }
+      } catch (_) {}
+
+      final nearby = await ordersRepo.getProviderCustomRequests(
+        lat: providerLat,
+        lng: providerLng,
+      );
+      final pending = await ordersRepo.getProviderOffers(status: 'pending');
+      List<CompletionForm> bookingForms = const [];
+      List<CompletionForm> customForms = const [];
+      try {
+        bookingForms = await ordersRepo.getCompletionForms();
+      } catch (_) {}
+      try {
+        customForms = await ordersRepo.getCustomCompletionForms();
+      } catch (_) {}
+
+      // فرص قريبة = طلبات مخصصة لم يُقدَّم عليها عرض بعد
+      var nearbyWithoutOffer =
+          nearby.where((request) => !request.hasMyOffer).toList();
+      nearbyWithoutOffer = await _enrichNearbyCoords(
+        ordersRepo,
+        nearbyWithoutOffer,
+        providerLat: providerLat,
+        providerLng: providerLng,
+      );
+
+      final activeJobs = [...bookingForms, ...customForms]
+          .where((form) => form.isCurrentWork)
+          .toList()
+        ..sort((a, b) {
+          final aDate = DateTime.tryParse(a.createdAt ?? '') ?? DateTime(1970);
+          final bDate = DateTime.tryParse(b.createdAt ?? '') ?? DateTime(1970);
+          return bDate.compareTo(aDate);
         });
-      }
-    } on ServerFailure catch (e) {
-      if (mounted) {
-        setState(() {
-          _error = e.errMessage;
-          _loading = false;
-        });
-      }
+
+      if (!mounted) return;
+      setState(() {
+        _nearby = nearbyWithoutOffer;
+        _pendingOffers = pending;
+        _activeJobs = activeJobs;
+        _avatarUrl = avatarUrl;
+        _providerLat = providerLat;
+        _providerLng = providerLng;
+        _loading = false;
+      });
     } catch (_) {
-      if (mounted) setState(() => _loading = false);
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = 'mosaedHomeLoadError'.tr();
+      });
     }
   }
 
-  void _openServiceDetail(BuildContext context, String serviceId) {
+  Future<List<ProviderCustomRequest>> _enrichNearbyCoords(
+    ProviderOrdersRepository repo,
+    List<ProviderCustomRequest> requests, {
+    double? providerLat,
+    double? providerLng,
+  }) async {
+    if (requests.isEmpty) return requests;
+
+    final limit = requests.length.clamp(0, 8);
+    final head = requests.take(limit).toList();
+    final tail = requests.skip(limit).toList();
+
+    final enrichedHead = await Future.wait(
+      head.map((request) async {
+        var updated = request;
+        if (!request.hasCoords ||
+            request.description.trim().isEmpty ||
+            (request.customerName ?? '').trim().isEmpty) {
+          try {
+            final detail = await repo.getProviderCustomRequestDetail(request.id);
+            updated = request.copyWith(
+              description: request.description.trim().isNotEmpty
+                  ? request.description
+                  : detail.description,
+              customerName: (request.customerName ?? '').trim().isNotEmpty
+                  ? request.customerName
+                  : detail.customerName,
+              customerAvatar: (request.customerAvatar ?? '').trim().isNotEmpty
+                  ? request.customerAvatar
+                  : detail.customerAvatar,
+              city: request.city ?? detail.city,
+              region: request.region ?? detail.region,
+              district: request.district ?? detail.district,
+              lat: request.lat ?? detail.lat,
+              lng: request.lng ?? detail.lng,
+              photoCount: request.photoCount ?? detail.photoCount,
+              image: request.image ?? detail.image,
+              images: request.images.isNotEmpty ? request.images : detail.images,
+            );
+          } catch (_) {}
+        }
+
+        final computed = distanceKmBetween(
+          fromLat: providerLat,
+          fromLng: providerLng,
+          toLat: updated.lat,
+          toLng: updated.lng,
+        );
+        if (computed != null) {
+          updated = updated.copyWith(distanceKm: computed);
+        }
+        return updated;
+      }),
+    );
+
+    return [...enrichedHead, ...tail];
+  }
+
+  double? _distanceTo({double? lat, double? lng, double? fallback}) {
+    return distanceKmBetween(
+          fromLat: _providerLat,
+          fromLng: _providerLng,
+          toLat: lat,
+          toLng: lng,
+        ) ??
+        fallback;
+  }
+
+  void _openNotifications() {
     AppFunctions.navigateTo(
       context,
-      ServiceDetailScreen(serviceId: serviceId),
+      const NotificationsScreen(),
       PageTransitionType.rightToLeft,
     );
   }
 
-  void _openCustomService(BuildContext context) {
+  void _openRequest(ProviderCustomRequest request) {
     AppFunctions.navigateTo(
       context,
-      const CustomServiceScreen(),
+      CustomRequestDetailScreen(requestId: request.id),
+      PageTransitionType.rightToLeft,
+    );
+  }
+
+  void _openJob(CompletionForm form) {
+    AppFunctions.navigateTo(
+      context,
+      TaskDetailScreen(
+        workId: form.workId,
+        initialTitle: form.serviceTitle,
+        kind: form.kind,
+      ),
       PageTransitionType.rightToLeft,
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final userName = context.read<AuthRepository>().userName;
+    final rawName = context.read<AuthRepository>().userName.trim();
+    final name = rawName.isEmpty ? 'mosaedGuest'.tr() : rawName;
 
-    return ColoredBox(
-      color: MosaedColors.background,
-      child: SafeArea(
-        child: RefreshIndicator(
-          color: MosaedColors.primaryContainer,
-          onRefresh: _loadServices,
-          child: CustomScrollView(
-            slivers: [
-              SliverToBoxAdapter(
-                child: Container(
-                  padding: EdgeInsets.fromLTRB(20.w, 12.h, 20.w, 16.h),
-                  decoration: BoxDecoration(
-                    color: MosaedColors.surface.withValues(alpha: 0.92),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.04),
-                        blurRadius: 8,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  child: Row(
-                    children: [
-                      CircleAvatar(
-                        radius: 22.r,
-                        backgroundColor: MosaedColors.surfaceContainerLow,
-                        child: Icon(
-                          Icons.person_rounded,
-                          color: MosaedColors.primary,
-                          size: 26.sp,
-                        ),
-                      ),
-                      SizedBox(width: 10.w),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'mosaedWelcomeUser'.tr(),
-                              style: getRegularStyle(
-                                fontSize: 11.sp,
-                                color: MosaedColors.onSurfaceVariant,
-                              ),
-                            ),
-                            Text(
-                              userName.isNotEmpty ? userName : 'mosaedGuest'.tr(),
-                              style: getBoldStyle(
-                                fontSize: 14.sp,
-                                color: MosaedColors.textPrimary,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Icon(
-                        Icons.notifications,
-                        color: MosaedColors.primary,
-                        size: 32.sp,
-                      ),
-                    ],
-                  ),
+    return SafeArea(
+      bottom: false,
+      child: RefreshIndicator(
+        color: MosaedColors.brand,
+        onRefresh: reload,
+        child: CustomScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(20.w, 12.h, 20.w, 0),
+                child: HomeHeader(
+                  name: name,
+                  avatarUrl: _avatarUrl,
+                  onNotificationsTap: _openNotifications,
                 ),
               ),
-              SliverToBoxAdapter(child: SizedBox(height: 20.h)),
+            ),
+            const SliverToBoxAdapter(child: HomeDuesWarningBanner()),
+            if (_loading)
+              const SliverFillRemaining(
+                hasScrollBody: false,
+                child: Center(
+                  child: CircularProgressIndicator(color: MosaedColors.brand),
+                ),
+              )
+            else if (_error != null)
+              SliverFillRemaining(
+                hasScrollBody: false,
+                child: HomeErrorBody(message: _error!, onRetry: reload),
+              )
+            else ...[
               SliverToBoxAdapter(
-                child: CustomServiceHomeCard(
-                  onTap: () => _openCustomService(context),
+                child: HomeSummarySection(
+                  nearbyCount: _nearby.length,
+                  pendingOffersCount: _pendingOffers.length,
+                  activeJobsCount: _activeJobs.length,
+                  onOpenRequests: widget.onOpenRequests,
+                  onOpenOffers: widget.onOpenOffers,
+                  onOpenTasks: widget.onOpenTasks,
+                ),
+              ),
+              SliverToBoxAdapter(
+                child: HomeSectionHeader(
+                  title: 'mosaedNearbyOpportunitiesNearYou'.tr(),
+                  onViewAll: widget.onOpenRequests,
+                ),
+              ),
+              SliverToBoxAdapter(
+                child: HomeWorkList(
+                  isEmpty: _nearby.isEmpty,
+                  emptyMessage: 'mosaedNoNearbyOpportunities'.tr(),
+                  emptyImage: ImageAssets.noPlaces,
+                  height: 215.h,
+                  emptyHeight: 215.h,
+                  itemCount: _nearby.length.clamp(0, 8),
+                  itemBuilder: (context, index) {
+                    final item = _nearby[index];
+                    final customerName =
+                        (item.customerName ?? '').trim().isNotEmpty
+                            ? item.customerName!.trim()
+                            : 'mosaedClient'.tr();
+                    return HomeWorkCard(
+                      width: 362.w,
+                      height: 215.h,
+                      badge: 'mosaedCustomRequestBadge'.tr(),
+                      imageUrl: item.image,
+                      title: item.title.trim().isNotEmpty
+                          ? item.title
+                          : (item.specializationName ?? 'mosaedCustomRequest'.tr()),
+                      personName: customerName,
+                      personAvatar: item.customerAvatar,
+                      timeLabel: homeRelativeTime(item.createdAt),
+                      description: item.displayDescription,
+                      photoCount: item.photoCount,
+                      distanceKm: item.distanceKm ??
+                          _distanceTo(lat: item.lat, lng: item.lng),
+                      locationText: item.locationText.isNotEmpty
+                          ? item.locationText
+                          : null,
+                      scheduledDate:
+                          (item.scheduledDate ?? '').trim().isNotEmpty
+                              ? requestScheduleLabel(
+                                  context,
+                                  item.scheduledDate,
+                                )
+                              : null,
+                      onTap: () => _openRequest(item),
+                    );
+                  },
+                ),
+              ),
+              SliverToBoxAdapter(
+                child: HomeSectionHeader(
+                  title: 'mosaedCurrentWorks'.tr(),
+                  onViewAll: widget.onOpenTasks,
+                ),
+              ),
+              SliverToBoxAdapter(
+                child: HomeWorkList(
+                  isEmpty: _activeJobs.isEmpty,
+                  emptyMessage: 'mosaedNoActiveJobs'.tr(),
+                  emptyImage: ImageAssets.serviceToMe,
+                  height: 215.h,
+                  emptyHeight: 215.h,
+                  itemCount: _activeJobs.length.clamp(0, 8),
+                  itemBuilder: (context, index) {
+                    final job = _activeJobs[index];
+                    return HomeWorkCard(
+                      width: 362.w,
+                      height: 215.h,
+                      badge: job.isCustomRequest
+                          ? 'mosaedCustomRequestBadge'.tr()
+                          : 'mosaedBookingTaskBadge'.tr(),
+                      badgeColor: job.isCustomRequest
+                          ? const Color(0xFF1B7A4A)
+                          : MosaedColors.brand,
+                      badgeBackground: job.isCustomRequest
+                          ? const Color(0xFFDEFFEB)
+                          : MosaedColors.otpFill,
+                      imageUrl: job.cardImage,
+                      title: job.displayTitle,
+                      personName: job.displayCustomerName,
+                      personAvatar: job.customerAvatar,
+                      timeLabel: homeRelativeTime(job.createdAt),
+                      description: job.displayDescription,
+                      photoCount: job.cardPhotoCount > 0
+                          ? job.cardPhotoCount
+                          : null,
+                      distanceKm: _distanceTo(lat: job.lat, lng: job.lng),
+                      locationText: job.locationText.isNotEmpty
+                          ? job.locationText
+                          : null,
+                      scheduledDate:
+                          (job.scheduledDate ?? '').trim().isNotEmpty
+                              ? job.scheduledDate
+                              : null,
+                      statusLabel: job.isPaymentPending
+                          ? job.paymentStatusLabelKey.tr()
+                          : 'mosaedInProgress'.tr(),
+                      onTap: () => _openJob(job),
+                    );
+                  },
                 ),
               ),
               SliverToBoxAdapter(child: SizedBox(height: 24.h)),
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 20.w),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'mosaedFeaturedServices'.tr(),
-                        style: getBoldStyle(
-                          fontSize: 20.sp,
-                          color: MosaedColors.textPrimary,
-                        ),
-                      ),
-                      if (_error != null)
-                        TextButton(
-                          onPressed: _loadServices,
-                          child: Text(
-                            'mosaedRetry'.tr(),
-                            style: getBoldStyle(
-                              fontSize: 12.sp,
-                              color: MosaedColors.primary,
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ),
-              if (_loading)
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 20.w, vertical: 12.h),
-                    child: const HomeShimmer(),
-                  ),
-                )
-              else if (_services.isEmpty)
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: EdgeInsets.all(20.w),
-                    child: Text(
-                      _error ?? 'noCategories'.tr(),
-                      textAlign: TextAlign.center,
-                      style: getRegularStyle(
-                        fontSize: 14.sp,
-                        color: MosaedColors.textSecondary,
-                      ),
-                    ),
-                  ),
-                )
-              else
-                SliverPadding(
-                  padding: EdgeInsets.fromLTRB(20.w, 12.h, 20.w, 24.h),
-                  sliver: SliverGrid(
-                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 2,
-                      mainAxisSpacing: 16.h,
-                      crossAxisSpacing: 16.w,
-                      childAspectRatio: 0.82,
-                    ),
-                    delegate: SliverChildBuilderDelegate((context, index) {
-                      final service = _services[index];
-                      return _ServiceGridCard(
-                        service: service,
-                        onTap: () => _openServiceDetail(context, service.id),
-                      );
-                    }, childCount: _services.length),
-                  ),
-                ),
             ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ServiceGridCard extends StatelessWidget {
-  const _ServiceGridCard({required this.service, required this.onTap});
-
-  final ExistedService service;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: MosaedColors.surfaceWhite,
-      borderRadius: BorderRadius.circular(24.r),
-      elevation: 0,
-      shadowColor: Colors.black.withValues(alpha: 0.05),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(24.r),
-        child: Ink(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(24.r),
-            border: Border.all(
-              color: MosaedColors.outlineVariant.withValues(alpha: 0.25),
-            ),
-            boxShadow: MosaedColors.softShadow,
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Expanded(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(24.r)),
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      if (service.hasImage)
-                        Image.network(
-                          service.image!,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => _imageFallback(),
-                        )
-                      else
-                        _imageFallback(),
-                      Positioned(
-                        top: 8.h,
-                        left: 8.w,
-                        child: Container(
-                          padding: EdgeInsets.all(6.w),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.92),
-                            shape: BoxShape.circle,
-                            boxShadow: MosaedColors.softShadow,
-                          ),
-                          child: ServiceThumbnail(
-                            service: service,
-                            size: 18.w,
-                            borderRadius: BorderRadius.circular(6.r),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              Padding(
-                padding: EdgeInsets.symmetric(vertical: 12.h, horizontal: 8.w),
-                child: Text(
-                  service.title,
-                  textAlign: TextAlign.center,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: getMediumStyle(
-                    fontSize: 13.sp,
-                    color: MosaedColors.textPrimary,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _imageFallback() {
-    return Container(
-      color: service.accentColor.withValues(alpha: 0.12),
-      child: Center(
-        child: ServiceThumbnail(
-          service: service,
-          size: 48.w,
-          borderRadius: BorderRadius.circular(14.r),
+          ],
         ),
       ),
     );
