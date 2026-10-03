@@ -96,6 +96,50 @@ class CustomerAddress {
     return parts.whereType<String>().join(' • ');
   }
 
+  /// City, district, street — card subtitle in the addresses design.
+  String get shortAddress {
+    final parts = [
+      if (cityName.trim().isNotEmpty) cityName.trim(),
+      if (district.trim().isNotEmpty) district.trim(),
+      if (street.trim().isNotEmpty) street.trim(),
+    ];
+    return parts.join('، ');
+  }
+
+  CustomerAddress copyWith({
+    String? id,
+    String? city,
+    String? cityName,
+    String? region,
+    String? regionName,
+    String? district,
+    String? street,
+    String? buildingNo,
+    String? lat,
+    String? lng,
+    String? floorNo,
+    String? apartmentNo,
+    String? label,
+    bool? isDefault,
+  }) {
+    return CustomerAddress(
+      id: id ?? this.id,
+      city: city ?? this.city,
+      cityName: cityName ?? this.cityName,
+      region: region ?? this.region,
+      regionName: regionName ?? this.regionName,
+      district: district ?? this.district,
+      street: street ?? this.street,
+      buildingNo: buildingNo ?? this.buildingNo,
+      lat: lat ?? this.lat,
+      lng: lng ?? this.lng,
+      floorNo: floorNo ?? this.floorNo,
+      apartmentNo: apartmentNo ?? this.apartmentNo,
+      label: label ?? this.label,
+      isDefault: isDefault ?? this.isDefault,
+    );
+  }
+
   factory CustomerAddress.fromJson(Map<String, dynamic> json) {
     return CustomerAddress(
       id: json['id']?.toString() ?? '',

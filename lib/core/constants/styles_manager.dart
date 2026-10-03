@@ -14,33 +14,31 @@ TextStyle _getTextStyle(
     fontSize: fontSize,
     color: color,
     fontWeight: fontWeight,
-    fontFamily: 'Tajawal',
+    fontFamily: FontConstants.fontFamily, // IBMPlexSansArabic
     height: height,
     decoration: decoration,
     decorationColor: decorationColor,
   );
 }
 
-TextStyle _getTextStyle2(
-  double fontSize,
-  FontWeight fontWeight,
-  Color color,
+/// ExtraLight — IBMPlexSansArabic-ExtraLight.ttf (w200)
+TextStyle getExtraLightStyle({
+  required double fontSize,
+  required Color color,
   double? height,
   TextDecoration? decoration,
   Color? decorationColor,
-) {
-  return TextStyle(
-    fontSize: fontSize,
-    color: color,
-    fontWeight: fontWeight,
-    fontFamily: 'Tajawal',
-    height: height,
-    decoration: decoration,
-    decorationColor: decorationColor,
+}) {
+  return _getTextStyle(
+    fontSize,
+    FontWeightManager.extraLight,
+    color,
+    height,
+    decoration,
+    decorationColor,
   );
 }
 
-// light style
 TextStyle getLightStyle({
   required double fontSize,
   required Color color,
@@ -58,7 +56,6 @@ TextStyle getLightStyle({
   );
 }
 
-// regular style
 TextStyle getRegularStyle({
   required double fontSize,
   required Color color,
@@ -76,7 +73,6 @@ TextStyle getRegularStyle({
   );
 }
 
-// medium style
 TextStyle getMediumStyle({
   required double fontSize,
   required Color color,
@@ -94,7 +90,23 @@ TextStyle getMediumStyle({
   );
 }
 
-// bold style
+TextStyle getSemiBoldStyle({
+  required double fontSize,
+  required Color color,
+  double? height,
+  TextDecoration? decoration,
+  Color? decorationColor,
+}) {
+  return _getTextStyle(
+    fontSize,
+    FontWeightManager.semiBold,
+    color,
+    height,
+    decoration,
+    decorationColor,
+  );
+}
+
 TextStyle getBoldStyle({
   required double fontSize,
   required Color color,
@@ -112,77 +124,66 @@ TextStyle getBoldStyle({
   );
 }
 
-// light style
+// Legacy aliases (same IBM family)
 TextStyle getLightStyle2({
   required double fontSize,
   required Color color,
   double? height,
   TextDecoration? decoration,
   Color? decorationColor,
-}) {
-  return _getTextStyle2(
-    fontSize,
-    FontWeightManager.light,
-    color,
-    height,
-    decoration,
-    decorationColor,
-  );
-}
+}) =>
+    getLightStyle(
+      fontSize: fontSize,
+      color: color,
+      height: height,
+      decoration: decoration,
+      decorationColor: decorationColor,
+    );
 
-// regular style
 TextStyle getRegularStyle2({
   required double fontSize,
   required Color color,
   double? height,
   TextDecoration? decoration,
   Color? decorationColor,
-}) {
-  return _getTextStyle2(
-    fontSize,
-    FontWeightManager.regular,
-    color,
-    height,
-    decoration,
-    decorationColor,
-  );
-}
+}) =>
+    getRegularStyle(
+      fontSize: fontSize,
+      color: color,
+      height: height,
+      decoration: decoration,
+      decorationColor: decorationColor,
+    );
 
-// medium style
 TextStyle getMediumStyle2({
   required double fontSize,
   required Color color,
   double? height,
   TextDecoration? decoration,
   Color? decorationColor,
-}) {
-  return _getTextStyle2(
-    fontSize,
-    FontWeightManager.medium,
-    color,
-    height,
-    decoration,
-    decorationColor,
-  );
-}
+}) =>
+    getMediumStyle(
+      fontSize: fontSize,
+      color: color,
+      height: height,
+      decoration: decoration,
+      decorationColor: decorationColor,
+    );
 
-// bold style
 TextStyle getBoldStyle2({
   required double fontSize,
   required Color color,
   double? height,
   TextDecoration? decoration,
   Color? decorationColor,
-}) {
-  return _getTextStyle2(
-    fontSize,
-    FontWeightManager.bold,
-    color,
-    height,
-    decoration,
-    decorationColor,
-  );
-}
+}) =>
+    getBoldStyle(
+      fontSize: fontSize,
+      color: color,
+      height: height,
+      decoration: decoration,
+      decorationColor: decorationColor,
+    );
 
 TextDirection getTextDirectionFromText(String text) {
   final arabicRegex = RegExp(r'[\u0600-\u06FF]');

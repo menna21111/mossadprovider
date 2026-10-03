@@ -7,73 +7,100 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 import '../../../app/auth_navigation.dart';
 import '../../../app/functions.dart';
+import '../../../core/constants/assets_manager.dart';
 import '../../../core/constants/mosaed_colors.dart';
-import '../../../core/constants/styles_manager.dart';
 import '../../../core/network/failure.dart';
 import '../../auth/presentation/widgets/mosaed_buttons.dart';
 import '../data/models/address_models.dart';
 import '../data/services_repository.dart';
+import 'pick_location_map_screen.dart';
+import 'widgets/address_chrome.dart';
+import 'widgets/address_form_fields.dart';
 
 class AddAddressScreen extends StatefulWidget {
-  const AddAddressScreen({super.key, this.canSkip = false});
+  const AddAddressScreen({
+    super.key,
+    this.canSkip = false,
+    this.initialPosition,
+  });
 
   final bool canSkip;
+  final LatLng? initialPosition;
 
   @override
   State<AddAddressScreen> createState() => _AddAddressScreenState();
 }
 
 class _AddAddressScreenState extends State<AddAddressScreen> {
+  static const _riyadh = LatLng(24.713552, 46.675297);
+
   final _formKey = GlobalKey<FormState>();
   final _districtController = TextEditingController();
   final _streetController = TextEditingController();
   final _buildingController = TextEditingController();
-  final _floorController = TextEditingController();
   final _apartmentController = TextEditingController();
-  final _labelController = TextEditingController(text: 'المنزل');
 
-  GoogleMapController? _mapController;
-  LatLng _position = const LatLng(24.713552, 46.675297);
+  LatLng _position = _riyadh;
   List<CityModel> _cities = [];
   List<RegionModel> _regions = [];
   String? _selectedCityId;
   String? _selectedRegionId;
+  String? _selectedLabel;
   bool _loading = true;
   bool _saving = false;
+
+  List<(String, String)> get _labelOptions => [
+        ('mosaedLabelHome'.tr(), 'mosaedLabelHome'.tr()),
+        ('mosaedLabelWork'.tr(), 'mosaedLabelWork'.tr()),
+        ('mosaedLabelOther'.tr(), 'mosaedLabelOther'.tr()),
+      ];
 
   @override
   void initState() {
     super.initState();
+    if (widget.initialPosition != null) {
+      _position = widget.initialPosition!;
+    }
+    _districtController.addListener(_onFormChanged);
+    _streetController.addListener(_onFormChanged);
+    _buildingController.addListener(_onFormChanged);
     _loadData();
+  }
+
+  void _onFormChanged() => setState(() {});
+
+  bool get _canSubmit {
+    return !_saving &&
+        _selectedCityId != null &&
+        _selectedRegionId != null &&
+        _districtController.text.trim().isNotEmpty &&
+        _streetController.text.trim().isNotEmpty &&
+        _selectedLabel != null;
   }
 
   @override
   void dispose() {
+    _districtController.removeListener(_onFormChanged);
+    _streetController.removeListener(_onFormChanged);
+    _buildingController.removeListener(_onFormChanged);
     _districtController.dispose();
     _streetController.dispose();
     _buildingController.dispose();
-    _floorController.dispose();
     _apartmentController.dispose();
-    _labelController.dispose();
-    _mapController?.dispose();
     super.dispose();
   }
 
   Future<void> _loadData() async {
     try {
-      final repo = context.read<ServicesRepository>();
-      final cities = await repo.getCities();
+      final cities = await context.read<ServicesRepository>().getCities();
       if (!mounted) return;
       setState(() {
         _cities = cities;
         _loading = false;
-        if (cities.isNotEmpty) {
-          _selectedCityId = cities.first.id;
-          _regions = cities.first.regions;
-          if (_regions.isNotEmpty) _selectedRegionId = _regions.first.id;
-        }
       });
-      await _goToCurrentLocation();
+      if (widget.initialPosition == null) {
+        await _ensureDefaultPosition();
+      }
     } on ServerFailure catch (e) {
       if (mounted) {
         setState(() => _loading = false);
@@ -84,17 +111,17 @@ class _AddAddressScreenState extends State<AddAddressScreen> {
     }
   }
 
-  Future<void> _goToCurrentLocation() async {
-    final permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      await Geolocator.requestPermission();
-    }
+  Future<void> _ensureDefaultPosition() async {
     try {
+      final permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        return;
+      }
       final pos = await Geolocator.getCurrentPosition();
-      final latLng = LatLng(pos.latitude, pos.longitude);
-      if (!mounted) return;
-      setState(() => _position = latLng);
-      await _mapController?.animateCamera(CameraUpdate.newLatLng(latLng));
+      if (mounted) {
+        setState(() => _position = LatLng(pos.latitude, pos.longitude));
+      }
     } catch (_) {}
   }
 
@@ -106,25 +133,27 @@ class _AddAddressScreenState extends State<AddAddressScreen> {
       _regions = [];
     });
     try {
-      final regions = await context.read<ServicesRepository>().getRegions(cityId);
+      final regions =
+          await context.read<ServicesRepository>().getRegions(cityId);
       if (!mounted) return;
-      setState(() {
-        _regions = regions;
-        if (regions.isNotEmpty) _selectedRegionId = regions.first.id;
-      });
+      setState(() => _regions = regions);
     } catch (_) {}
+  }
+
+  Future<void> _openMapPicker() async {
+    final picked = await PickLocationMapScreen.open(
+      context,
+      initialPosition: _position,
+      goToCurrentOnStart: true,
+    );
+    if (picked != null && mounted) {
+      setState(() => _position = picked);
+    }
   }
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
-    if (_selectedCityId == null || _selectedRegionId == null) {
-      AppFunctions.showsToast(
-        'mosaedAddressCityRegionRequired'.tr(),
-        MosaedColors.danger,
-        context,
-      );
-      return;
-    }
+    if (!_canSubmit) return;
 
     setState(() => _saving = true);
     try {
@@ -135,11 +164,10 @@ class _AddAddressScreenState extends State<AddAddressScreen> {
               district: _districtController.text.trim(),
               street: _streetController.text.trim(),
               buildingNo: _buildingController.text.trim(),
-              floorNo: _floorController.text.trim(),
               apartmentNo: _apartmentController.text.trim(),
               lat: _position.latitude,
               lng: _position.longitude,
-              label: _labelController.text.trim(),
+              label: _selectedLabel,
             ),
           );
       if (!mounted) return;
@@ -165,225 +193,154 @@ class _AddAddressScreenState extends State<AddAddressScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: MosaedColors.background,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        title: Text(
-          'mosaedAddAddress'.tr(),
-          style: getBoldStyle(fontSize: 18.sp, color: MosaedColors.textPrimary),
-        ),
-        actions: [
-          IconButton(
-            onPressed: _goToCurrentLocation,
-            icon: const Icon(Icons.my_location_rounded),
-          ),
-        ],
+      backgroundColor: MosaedColors.surfaceWhite,
+      appBar: AddressAppBar(
+        title: 'mosaedAddNewAddress'.tr(),
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : Column(
-              children: [
-                SizedBox(
-                  height: 220.h,
-                  child: GoogleMap(
-                    initialCameraPosition: CameraPosition(
-                      target: _position,
-                      zoom: 14,
-                    ),
-                    onMapCreated: (c) => _mapController = c,
-                    onTap: (latLng) => setState(() => _position = latLng),
-                    markers: {
-                      Marker(
-                        markerId: const MarkerId('selected'),
-                        position: _position,
-                        draggable: true,
-                        onDragEnd: (p) => setState(() => _position = p),
-                      ),
-                    },
-                    myLocationEnabled: true,
-                    myLocationButtonEnabled: false,
-                  ),
-                ),
-                Expanded(
-                  child: SingleChildScrollView(
-                    padding: EdgeInsets.all(20.w),
-                    child: Form(
-                      key: _formKey,
+          ? const Center(
+              child: CircularProgressIndicator(color: MosaedColors.brand),
+            )
+          : Form(
+              key: _formKey,
+              child: Column(
+                children: [
+                  Expanded(
+                    child: SingleChildScrollView(
+                      padding: EdgeInsets.fromLTRB(24.w, 8.h, 24.w, 16.h),
                       child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          Text(
-                            'mosaedMapPinHint'.tr(),
-                            style: getRegularStyle(
-                              fontSize: 12.sp,
-                              color: MosaedColors.textSecondary,
-                            ),
+                          AddressFormIntro(
+                            title: 'mosaedAddressFormTitle'.tr(),
+                            subtitle: 'mosaedAddressFormSubtitle'.tr(),
                           ),
-                          SizedBox(height: 16.h),
-                          _dropdown(
+                          SizedBox(height: 24.h),
+                          AddressDropdownField<String>(
                             label: 'mosaedCity'.tr(),
+                            hint: 'mosaedSelectCity'.tr(),
+                            iconAsset: ImageAssets.chooseCity,
                             value: _selectedCityId,
                             items: _cities
-                                .map((c) => (c.id, c.name))
+                                .map(
+                                  (c) => DropdownMenuItem(
+                                    value: c.id,
+                                    child: Text(c.name),
+                                  ),
+                                )
                                 .toList(),
                             onChanged: _onCityChanged,
+                            validator: (v) => v == null
+                                ? 'mosaedAddressCityRegionRequired'.tr()
+                                : null,
                           ),
-                          SizedBox(height: 12.h),
-                          _dropdown(
+                          SizedBox(height: 14.h),
+                          AddressDropdownField<String>(
                             label: 'mosaedRegion'.tr(),
+                            hint: 'mosaedSelectRegion'.tr(),
+                            iconAsset: ImageAssets.mapsGlobal02,
                             value: _selectedRegionId,
                             items: _regions
-                                .map((r) => (r.id, r.name))
+                                .map(
+                                  (r) => DropdownMenuItem(
+                                    value: r.id,
+                                    child: Text(r.name),
+                                  ),
+                                )
                                 .toList(),
                             onChanged: (v) =>
                                 setState(() => _selectedRegionId = v),
+                            validator: (v) => v == null
+                                ? 'mosaedAddressCityRegionRequired'.tr()
+                                : null,
                           ),
-                          SizedBox(height: 12.h),
-                          _field(
-                            controller: _districtController,
+                          SizedBox(height: 14.h),
+                          AddressTextField(
                             label: 'mosaedDistrict'.tr(),
-                            hint: 'mosaedDistrictHint'.tr(),
-                            required: true,
+                            controller: _districtController,
+                            hint: 'mosaedSelectDistrict'.tr(),
+                            iconAsset: ImageAssets.chooseArea,
+                            validator: (v) => v == null || v.trim().isEmpty
+                                ? 'mosaedDistrict'.tr()
+                                : null,
                           ),
-                          SizedBox(height: 12.h),
-                          _field(
-                            controller: _streetController,
+                          SizedBox(height: 14.h),
+                          AddressTextField(
                             label: 'mosaedStreet'.tr(),
-                            hint: 'mosaedStreetHint'.tr(),
-                            required: true,
+                            controller: _streetController,
+                            hint: 'mosaedStreetDetailedHint'.tr(),
+                            iconAsset: ImageAssets.chooseStreet,
+                            validator: (v) => v == null || v.trim().isEmpty
+                                ? 'mosaedStreet'.tr()
+                                : null,
                           ),
-                          SizedBox(height: 12.h),
+                          SizedBox(height: 14.h),
                           Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Expanded(
-                                child: _field(
-                                  controller: _buildingController,
+                                child: AddressTextField(
                                   label: 'mosaedBuildingNo'.tr(),
+                                  controller: _buildingController,
                                   hint: '12',
+                                  iconAsset: ImageAssets.buildNumber,
+                                  keyboardType: TextInputType.number,
                                 ),
                               ),
-                              SizedBox(width: 8.w),
+                              SizedBox(width: 12.w),
                               Expanded(
-                                child: _field(
-                                  controller: _floorController,
-                                  label: 'mosaedFloorNo'.tr(),
-                                  hint: '3',
+                                child: AddressTextField(
+                                  label: 'mosaedApartmentOptional'.tr(),
+                                  controller: _apartmentController,
+                                  hint: '5',
+                                  iconAsset: ImageAssets.houseIcon,
+                                  keyboardType: TextInputType.number,
                                 ),
                               ),
                             ],
                           ),
-                          SizedBox(height: 12.h),
-                          _field(
-                            controller: _apartmentController,
-                            label: 'mosaedApartmentNo'.tr(),
-                            hint: '5',
+                          SizedBox(height: 14.h),
+                          AddressDropdownField<String>(
+                            label: 'mosaedDescription'.tr(),
+                            hint: 'mosaedSelectPlaceDescription'.tr(),
+                            iconAsset: ImageAssets.descIcon,
+                            value: _selectedLabel,
+                            items: _labelOptions
+                                .map(
+                                  (e) => DropdownMenuItem(
+                                    value: e.$1,
+                                    child: Text(e.$2),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged: (v) =>
+                                setState(() => _selectedLabel = v),
+                            validator: (v) => v == null
+                                ? 'mosaedSelectPlaceDescription'.tr()
+                                : null,
                           ),
-                          SizedBox(height: 12.h),
-                          _field(
-                            controller: _labelController,
-                            label: 'mosaedAddressLabel'.tr(),
-                            hint: 'mosaedAddressLabelHint'.tr(),
-                          ),
-                          SizedBox(height: 20.h),
-                          MosaedPrimaryButton(
-                            text: 'mosaedSaveAddress'.tr(),
-                            icon: Icons.save_rounded,
-                            isLoading: _saving,
-                            onPressed: _save,
-                          ),
-                          if (widget.canSkip) ...[
-                            SizedBox(height: 12.h),
-                            MosaedOutlineButton(
-                              text: 'cancel'.tr(),
-                              onPressed: () => Navigator.pop(context),
-                            ),
-                          ],
+                          SizedBox(height: 8.h),
                         ],
                       ),
                     ),
                   ),
-                ),
-              ],
+                  Padding(
+                    padding: EdgeInsets.fromLTRB(24.w, 8.h, 24.w, 16.h),
+                    child: Column(
+                      children: [
+                        MosaedPrimaryButton(
+                          text: 'mosaedSaveAndContinue'.tr(),
+                          isLoading: _saving,
+                          onPressed: _canSubmit ? _save : null,
+                        ),
+                        SizedBox(height: 14.h),
+                        UseCurrentLocationLink(onTap: _openMapPicker),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
-    );
-  }
-
-  Widget _dropdown({
-    required String label,
-    required String? value,
-    required List<(String, String)> items,
-    required ValueChanged<String?> onChanged,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: getMediumStyle(
-            fontSize: 13.sp,
-            color: MosaedColors.textSecondary,
-          ),
-        ),
-        SizedBox(height: 6.h),
-        DropdownButtonFormField<String>(
-          value: value,
-          decoration: _decoration(),
-          items: items
-              .map(
-                (e) => DropdownMenuItem(value: e.$1, child: Text(e.$2)),
-              )
-              .toList(),
-          onChanged: onChanged,
-        ),
-      ],
-    );
-  }
-
-  Widget _field({
-    required TextEditingController controller,
-    required String label,
-    required String hint,
-    bool required = false,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: getMediumStyle(
-            fontSize: 13.sp,
-            color: MosaedColors.textSecondary,
-          ),
-        ),
-        SizedBox(height: 6.h),
-        TextFormField(
-          controller: controller,
-          decoration: _decoration(hint: hint),
-          validator: required
-              ? (v) => v == null || v.trim().isEmpty
-                  ? 'fieldRequired'.tr()
-                  : null
-              : null,
-        ),
-      ],
-    );
-  }
-
-  InputDecoration _decoration({String? hint}) {
-    return InputDecoration(
-      hintText: hint,
-      filled: true,
-      fillColor: MosaedColors.inputFill,
-      contentPadding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 14.h),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14.r),
-        borderSide: const BorderSide(color: MosaedColors.border),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14.r),
-        borderSide: const BorderSide(color: MosaedColors.primary, width: 1.5),
-      ),
     );
   }
 }

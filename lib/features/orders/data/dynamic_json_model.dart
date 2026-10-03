@@ -77,17 +77,35 @@ class DynamicJsonModel {
   }
 
   static List<Map<String, dynamic>> parseList(dynamic data) {
+    List<dynamic>? raw;
     if (data is List) {
-      return data.whereType<Map<String, dynamic>>().toList();
-    }
-    if (data is Map<String, dynamic>) {
-      for (final key in ['results', 'data', 'items', 'completion_forms', 'custom_requests']) {
-        final value = data[key];
+      raw = data;
+    } else if (data is Map) {
+      final map = Map<String, dynamic>.from(data);
+      for (final key in [
+        'results',
+        'data',
+        'items',
+        'completion_forms',
+        'custom_requests',
+      ]) {
+        final value = map[key];
         if (value is List) {
-          return value.whereType<Map<String, dynamic>>().toList();
+          raw = value;
+          break;
         }
       }
     }
-    return [];
+    if (raw == null) return const [];
+
+    final out = <Map<String, dynamic>>[];
+    for (final item in raw) {
+      if (item is Map<String, dynamic>) {
+        out.add(item);
+      } else if (item is Map) {
+        out.add(Map<String, dynamic>.from(item));
+      }
+    }
+    return out;
   }
 }

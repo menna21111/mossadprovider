@@ -203,6 +203,50 @@ class ServicesRepository {
     }
   }
 
+  Future<CustomerAddress> updateAddress(
+    String addressId,
+    CreateAddressPayload payload,
+  ) async {
+    try {
+      final response = await DioHelper.patchData(
+        url: AppConstants.deleteAddress(addressId),
+        data: payload.toJson(),
+      );
+      if (response.statusCode != 200 && response.statusCode != 201) {
+        throw ServerFailure(_extractError(response.data));
+      }
+      final map = response.data is Map<String, dynamic>
+          ? response.data as Map<String, dynamic>
+          : <String, dynamic>{};
+      final address = map.isEmpty
+          ? CustomerAddress(
+              id: addressId,
+              city: payload.city,
+              cityName: '',
+              region: payload.region,
+              regionName: '',
+              district: payload.district,
+              street: payload.street,
+              buildingNo: payload.buildingNo,
+              lat: payload.lat.toString(),
+              lng: payload.lng.toString(),
+              apartmentNo: payload.apartmentNo,
+              label: payload.label,
+              isDefault: payload.isDefault,
+            )
+          : CustomerAddress.fromJson(map);
+      if (payload.isDefault) {
+        await CacheHelper().saveData(
+          key: AppConstants.defaultAddressIdKey,
+          value: address.id,
+        );
+      }
+      return address;
+    } on DioException catch (e) {
+      throw ServerFailure.fromDioError(e);
+    }
+  }
+
   Future<void> deleteAddress(String addressId) async {
     try {
       await DioHelper.deleteData(

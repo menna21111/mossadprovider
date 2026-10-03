@@ -95,12 +95,29 @@ class CompletionForm {
     this.kind = CompletionFormKind.booking,
     this.previousWork,
     this.serviceTitle,
+    this.specializationName,
+    this.apiStatus,
+    this.startedAt,
     this.finishedAt,
     this.createdAt,
     this.updatedAt,
     this.notes,
     this.paymentRequestId,
     this.paymentStatus,
+    this.finalPrice,
+    this.customerName,
+    this.customerAvatar,
+    this.customerPhone,
+    this.city,
+    this.region,
+    this.district,
+    this.street,
+    this.scheduledDate,
+    this.description,
+    this.lat,
+    this.lng,
+    this.requestImages = const [],
+    this.serviceImage,
   });
 
   final String id;
@@ -112,15 +129,123 @@ class CompletionForm {
   final List<CompletionFormMedia> media;
   final PreviousWork? previousWork;
   final String? serviceTitle;
+  final String? specializationName;
+
+  /// Raw API status e.g. `provider_arrived`, `waiting`.
+  final String? apiStatus;
+
+  /// Non-null → provider arrived / execution unlocked (can upload photos).
+  final String? startedAt;
   final String? finishedAt;
   final String? createdAt;
   final String? updatedAt;
   final String? notes;
   final String? paymentRequestId;
   final String? paymentStatus;
+  final double? finalPrice;
+  final String? customerName;
+  final String? customerAvatar;
+  final String? customerPhone;
+  final String? city;
+  final String? region;
+  final String? district;
+  final String? street;
+  final String? scheduledDate;
+  final String? description;
+  final double? lat;
+  final double? lng;
+
+  /// Problem photos from the custom request (not work before/after).
+  final List<String> requestImages;
+
+  /// Catalog / booking cover for existed services.
+  final String? serviceImage;
 
   bool get isCustomRequest => kind == CompletionFormKind.customRequest;
   String get workId => bookingId.isNotEmpty ? bookingId : id;
+
+  String get displayTitle {
+    final title = (serviceTitle ?? '').trim();
+    if (title.isNotEmpty) return title;
+    final spec = (specializationName ?? '').trim();
+    if (spec.isNotEmpty) return spec;
+    return isCustomRequest
+        ? 'mosaedCustomRequest'.tr()
+        : 'mosaedActiveJob'.tr();
+  }
+
+  String? get cardImage {
+    if (requestImages.isNotEmpty) return requestImages.first;
+    final service = (serviceImage ?? '').trim();
+    if (service.isNotEmpty) return service;
+    return beforeImage;
+  }
+
+  /// In-progress, or finished but the customer still hasn't paid.
+  bool get isCurrentWork => !isFinished || isPaymentPending;
+
+  int get cardPhotoCount {
+    if (requestImages.isNotEmpty) return requestImages.length;
+    return photoCount;
+  }
+
+  String get displayCustomerName {
+    final name = (customerName ?? '').trim();
+    if (name.isNotEmpty) return name;
+    return 'mosaedClient'.tr();
+  }
+
+  /// `started_at != null` (or arrived status) → وصل ويقدر يرفع الصور.
+  bool get hasArrived {
+    final started = startedAt?.trim() ?? '';
+    if (started.isNotEmpty && started.toLowerCase() != 'null') return true;
+    final s = (apiStatus ?? '').toLowerCase().trim();
+    return s == 'provider_arrived' || s.contains('arrived');
+  }
+
+  bool get needsArrival => !isFinished && !hasArrived;
+
+  int get photoCount {
+    final count = media.where((m) => m.url.trim().isNotEmpty).length;
+    if (count > 0) return count;
+    var n = 0;
+    if (hasBeforeImage) n++;
+    if (hasRealAfterImage) n++;
+    return n;
+  }
+
+  String get locationText {
+    final cityPart = (city ?? '').trim();
+    final districtPart = (district ?? '').trim();
+    final streetPart = (street ?? '').trim();
+    if (cityPart.isNotEmpty && districtPart.isNotEmpty) {
+      final districtLabel = districtPart.startsWith('حي')
+          ? districtPart
+          : 'حي $districtPart';
+      if (streetPart.isNotEmpty) {
+        return '$cityPart، $districtLabel، $streetPart';
+      }
+      return '$cityPart، $districtLabel';
+    }
+    final parts = <String>[
+      if (cityPart.isNotEmpty) cityPart,
+      if (districtPart.isNotEmpty) districtPart,
+      if ((region ?? '').trim().isNotEmpty) region!.trim(),
+      if (streetPart.isNotEmpty) streetPart,
+    ];
+    return parts.join('، ');
+  }
+
+  String get displayDescription {
+    final note = (notes ?? '').trim();
+    if (note.isNotEmpty) return note;
+    final desc = (description ?? '').trim();
+    if (desc.isNotEmpty) return desc;
+    final spec = (specializationName ?? '').trim();
+    if (spec.isNotEmpty && spec != (serviceTitle ?? '').trim()) return spec;
+    if (isFinished) return '';
+    return 'mosaedJobInProgressHint'.tr();
+  }
 
   bool get awaitingCashConfirmation {
     final status = paymentStatus?.toLowerCase().trim() ?? '';
@@ -254,7 +379,11 @@ class CompletionForm {
   bool get hasBothPreviousWorkImages =>
       previousWork?.hasBefore == true && previousWork?.hasAfter == true;
 
+  /// لسه مفيش صورة قبل — حتى لو وصل (`started_at`).
   bool get workNotStarted => !hasBeforeImage;
+
+  /// وصل ومسموح يرفع صور قبل.
+  bool get canUploadBeforePhotos => hasArrived && !hasBeforeImage && !isFinished;
 
   /// قبل موجودة — لسه محتاجة رفع بعد (PATCH)
   bool get needsAfterUpload => hasBeforeImage && !hasRealAfterImage;
@@ -264,7 +393,7 @@ class CompletionForm {
 
   OrderStatus get status {
     if (isFinished) return OrderStatus.completed;
-    if (hasBeforeImage) return OrderStatus.workerArrived;
+    if (hasArrived || hasBeforeImage) return OrderStatus.workerArrived;
     return OrderStatus.pending;
   }
 
@@ -283,9 +412,9 @@ class CompletionForm {
     }
 
     PreviousWork? previousWork;
-    final previousWorkRaw = json['previous_work'];
-    if (previousWorkRaw is Map<String, dynamic>) {
-      previousWork = PreviousWork.fromJson(previousWorkRaw);
+    final previousWorkMap = _asStringKeyedMap(json['previous_work']);
+    if (previousWorkMap != null) {
+      previousWork = PreviousWork.fromJson(previousWorkMap);
     }
 
     final payment = json['payment'] is Map<String, dynamic>
@@ -314,25 +443,174 @@ class CompletionForm {
                 ? bookingId!
                 : (json['id']?.toString() ?? ''));
 
+    final customer = json['customer'];
+    final customerMap = _asStringKeyedMap(customer);
+    final request = json['request'] ?? json['custom_request'] ?? json['booking'];
+    final requestMap = _asStringKeyedMap(request);
+    final address = _asStringKeyedMap(
+          json['customer_address'] ??
+              json['address'] ??
+              requestMap?['customer_address'] ??
+              requestMap?['address'],
+        ) ??
+        _firstAddressMap(customerMap?['addresses'] ?? json['addresses']);
+
+    final attribute = _firstServiceAttribute(json['service_attributes']);
+    final attributeName = attribute?['name']?.toString().trim();
+    final attributeDetails = attribute?['details']?.toString().trim();
+
+    final requestImages = _parseImageUrls(
+      json['custom_request_images'] ??
+          json['request_images'] ??
+          (resolvedKind == CompletionFormKind.customRequest
+              ? (json['images'] ?? requestMap?['images'])
+              : null),
+    );
+
+    final serviceMap = _asStringKeyedMap(json['service']);
+    final serviceImage = _nullableText(
+      serviceMap?['image']?.toString() ??
+          serviceMap?['cover']?.toString() ??
+          json['service_image']?.toString() ??
+          json['cover_image']?.toString() ??
+          (resolvedKind == CompletionFormKind.booking
+              ? json['image']?.toString()
+              : null),
+    );
+
     return CompletionForm(
       id: json['id']?.toString() ?? '',
       bookingId: workId,
       kind: resolvedKind,
       serviceTitle: json['service_title']?.toString() ??
           json['request_title']?.toString() ??
-          json['title']?.toString(),
+          json['title']?.toString() ??
+          requestMap?['title']?.toString() ??
+          requestMap?['request_title']?.toString() ??
+          (attributeName?.isNotEmpty == true ? attributeName : null),
+      specializationName: json['specialization_name']?.toString() ??
+          requestMap?['specialization_name']?.toString() ??
+          json['service_name']?.toString() ??
+          (attributeName?.isNotEmpty == true ? attributeName : null),
       isFinished: json['is_finished'] == true,
-      finishedAt: json['finished_at']?.toString(),
+      apiStatus: json['status']?.toString(),
+      startedAt: _nullableText(json['started_at']?.toString()),
+      finishedAt: _nullableText(json['finished_at']?.toString()),
       createdAt: json['created_at']?.toString(),
       updatedAt: json['updated_at']?.toString(),
-      notes: json['notes']?.toString(),
+      notes: json['notes']?.toString() ?? json['note']?.toString(),
+      description: json['description']?.toString() ??
+          requestMap?['description']?.toString() ??
+          (attributeDetails?.isNotEmpty == true ? attributeDetails : null),
       media: media,
       previousWork: previousWork,
       paymentRequestId: json['payment_request_id']?.toString() ??
           payment?['id']?.toString(),
       paymentStatus: json['payment_status']?.toString() ??
           payment?['status']?.toString(),
+      finalPrice: _toDouble(
+        json['final_price'] ??
+            json['price'] ??
+            json['agreed_amount'] ??
+            payment?['amount'],
+      ),
+      customerName: _nullableText(
+        customerMap?['name']?.toString() ??
+            json['customer_name']?.toString() ??
+            requestMap?['customer_name']?.toString(),
+      ),
+      customerAvatar: _nullableText(
+        customerMap?['photo']?.toString() ??
+            customerMap?['avatar']?.toString() ??
+            customerMap?['image']?.toString() ??
+            json['customer_avatar']?.toString() ??
+            json['customer_photo']?.toString(),
+      ),
+      customerPhone: _nullableText(
+        customerMap?['phone_number']?.toString() ??
+            customerMap?['phone']?.toString() ??
+            json['customer_phone']?.toString(),
+      ),
+      city: json['city']?.toString() ??
+          address?['city_name']?.toString() ??
+          address?['city']?.toString() ??
+          requestMap?['city']?.toString(),
+      region: json['region']?.toString() ??
+          address?['region_name']?.toString() ??
+          address?['region']?.toString() ??
+          requestMap?['region']?.toString(),
+      district: json['district']?.toString() ??
+          address?['district']?.toString() ??
+          requestMap?['district']?.toString(),
+      street: json['street']?.toString() ??
+          address?['street']?.toString() ??
+          requestMap?['street']?.toString(),
+      scheduledDate: json['scheduled_date']?.toString() ??
+          requestMap?['scheduled_date']?.toString(),
+      lat: parseCoord(
+        json['lat'] ?? address?['lat'] ?? requestMap?['lat'],
+      ),
+      lng: parseCoord(
+        json['lng'] ?? address?['lng'] ?? requestMap?['lng'],
+      ),
+      requestImages: requestImages,
+      serviceImage: serviceImage,
     );
+  }
+
+  static List<String> _parseImageUrls(dynamic images) {
+    if (images is! List || images.isEmpty) return const [];
+    final urls = <String>[];
+    for (final item in images) {
+      if (item is String && item.trim().isNotEmpty) {
+        urls.add(item.trim());
+      } else if (item is Map) {
+        final url = (item['image'] ?? item['url'] ?? item['src'])
+            ?.toString()
+            .trim();
+        if (url != null && url.isNotEmpty) urls.add(url);
+      }
+    }
+    return urls;
+  }
+
+  static Map<String, dynamic>? _firstServiceAttribute(dynamic value) {
+    if (value is! List || value.isEmpty) return null;
+    return _asStringKeyedMap(value.first);
+  }
+
+  static double? _toDouble(dynamic value) {
+    if (value == null) return null;
+    if (value is num) return value.toDouble();
+    return double.tryParse(value.toString().trim());
+  }
+
+  static String? _nullableText(String? value) {
+    final text = value?.trim();
+    if (text == null || text.isEmpty || text.toLowerCase() == 'null') {
+      return null;
+    }
+    return text;
+  }
+
+  static Map<String, dynamic>? _asStringKeyedMap(dynamic value) {
+    if (value is Map<String, dynamic>) return value;
+    if (value is Map) {
+      return value.map((key, nested) => MapEntry(key.toString(), nested));
+    }
+    return null;
+  }
+
+  static Map<String, dynamic>? _firstAddressMap(dynamic value) {
+    if (value is! List || value.isEmpty) return null;
+    return _asStringKeyedMap(value.first);
+  }
+
+  static double? parseCoord(dynamic value) {
+    if (value == null) return null;
+    final parsed = double.tryParse(value.toString().trim());
+    if (parsed == null || parsed == 0) return null;
+    return parsed;
   }
 
   CompletionForm copyWith({
@@ -344,21 +622,42 @@ class CompletionForm {
     CompletionFormKind? kind,
     String? paymentRequestId,
     String? paymentStatus,
+    String? apiStatus,
+    String? startedAt,
+    String? serviceImage,
+    List<String>? requestImages,
   }) {
     return CompletionForm(
       id: id,
       bookingId: bookingId,
       kind: kind ?? this.kind,
       serviceTitle: serviceTitle,
+      specializationName: specializationName,
       isFinished: isFinished ?? this.isFinished,
+      apiStatus: apiStatus ?? this.apiStatus,
+      startedAt: startedAt ?? this.startedAt,
       finishedAt: finishedAt ?? this.finishedAt,
       createdAt: createdAt,
       updatedAt: updatedAt,
       notes: notes ?? this.notes,
+      description: description,
       media: media ?? this.media,
       previousWork: previousWork ?? this.previousWork,
       paymentRequestId: paymentRequestId ?? this.paymentRequestId,
       paymentStatus: paymentStatus ?? this.paymentStatus,
+      finalPrice: finalPrice,
+      customerName: customerName,
+      customerAvatar: customerAvatar,
+      customerPhone: customerPhone,
+      city: city,
+      region: region,
+      district: district,
+      street: street,
+      scheduledDate: scheduledDate,
+      lat: lat,
+      lng: lng,
+      requestImages: requestImages ?? this.requestImages,
+      serviceImage: serviceImage ?? this.serviceImage,
     );
   }
 
@@ -375,7 +674,7 @@ class CompletionForm {
           : (isCustomRequest
               ? 'mosaedCustomRequest'.tr()
               : 'mosaedService'.tr()),
-      serviceImage: beforeImage ?? afterImage,
+      serviceImage: cardImage ?? beforeImage ?? afterImage,
       status: status,
       type: isCustomRequest ? OrderType.customRequest : OrderType.booking,
       workerName: isCustomRequest
@@ -389,7 +688,7 @@ class CompletionForm {
           ? _formatDate(createdAt!)
           : 'mosaedNotAvailableYet',
       locationText: 'mosaedNotAvailableYet'.tr(),
-      arrivedAt: hasBeforeImage
+      arrivedAt: hasArrived
           ? 'mosaedWorkStarted'.tr()
           : 'mosaedNotArrivedYet',
       finishedAt: isFinished

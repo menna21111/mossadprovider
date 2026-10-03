@@ -137,6 +137,8 @@ class DioHelper {
     required FormData data,
     Map<String, dynamic>? query,
     bool isWithoutToken = false,
+    Duration? sendTimeout,
+    Duration? receiveTimeout,
   }) async {
     final accessToken = await getAccessToken();
     return dio!.post(
@@ -149,6 +151,8 @@ class DioHelper {
           if (!isWithoutToken && accessToken != null)
             'Authorization': 'Bearer $accessToken',
         },
+        sendTimeout: sendTimeout,
+        receiveTimeout: receiveTimeout,
       ),
     );
   }

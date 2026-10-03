@@ -8,7 +8,9 @@ import '../../../app/functions.dart';
 import '../../../app/navigator_key.dart';
 import '../../../core/constants/mosaed_colors.dart';
 import '../../../core/realtime/chat_session_registry.dart';
+import '../../../features/notifications/data/models/app_notification.dart';
 import '../../../features/notifications/data/notifications_repository.dart';
+import '../../../features/notifications/presentation/notification_navigation.dart';
 import '../../../features/notifications/presentation/notifications_screen.dart';
 import '../../../firebase_options.dart';
 import 'notification_manager.dart';
@@ -208,12 +210,31 @@ class PushNotificationService {
   }
 
   static void _handleRemoteMessageNavigation(RemoteMessage message) {
-    final route = message.data['route']?.toString();
+    final context = navigatorKey.currentContext;
+    if (context == null) {
+      _navigateToNotifications();
+      return;
+    }
+
+    final data = Map<String, dynamic>.from(message.data);
+    final notification = AppNotification.fromJson({
+      ...data,
+      'title': message.notification?.title ?? data['title'],
+      'body': message.notification?.body ?? data['body'],
+    });
+
+    if (notification.event.isNotEmpty) {
+      NotificationNavigation.open(context, notification);
+      return;
+    }
+
+    final route = data['route']?.toString();
     if (route != null && route.isNotEmpty) {
       _navigateTo(route);
-    } else {
-      _navigateToNotifications();
+      return;
     }
+
+    _navigateToNotifications();
   }
 
   static void _navigateTo(String route) {

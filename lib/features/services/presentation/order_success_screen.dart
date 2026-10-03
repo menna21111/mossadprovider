@@ -42,7 +42,7 @@ class _OrderSuccessScreenState extends State<OrderSuccessScreen> {
   void _trackOrder() {
     AppFunctions.navigateToAndFinish(
       context,
-      const MainShell(initialIndex: 1),
+      const MainShell(initialIndex: 2),
     );
   }
 

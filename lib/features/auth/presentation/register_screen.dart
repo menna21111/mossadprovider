@@ -13,9 +13,11 @@ import '../../../core/widgets/mosaed_dropdown.dart';
 import '../../custom_service/data/custom_service_repository.dart';
 import '../../custom_service/data/models/custom_service_models.dart';
 import 'cubit/auth_cubit.dart';
-import 'otp_screen.dart';
+import 'otp_bottom_sheet.dart';
+import 'widgets/auth_header.dart';
+import 'widgets/auth_rich_link.dart';
 import 'widgets/mosaed_buttons.dart';
-import 'widgets/mosaed_logo.dart';
+import 'widgets/terms_agree_tile.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -37,6 +39,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
   String? _selectedSpecializationId;
   File? _contractImage;
   bool _loadingSpecs = true;
+  bool _agreedToTerms = false;
+  bool _otpSheetOpen = false;
+
+  bool get _canSubmit =>
+      _agreedToTerms &&
+      _nameController.text.trim().isNotEmpty &&
+      mosaedPhoneDigitCount(_phoneController.text) >= 9 &&
+      _emailController.text.trim().isNotEmpty &&
+      (_selectedSpecializationId?.isNotEmpty ?? false) &&
+      _nationalIdController.text.trim().isNotEmpty &&
+      _commercialRegController.text.trim().isNotEmpty &&
+      _contractImage != null;
 
   @override
   void initState() {
@@ -62,7 +76,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
       setState(() {
         _specializations = specs;
         _loadingSpecs = false;
-        if (specs.isNotEmpty) _selectedSpecializationId = specs.first.id;
+        if (specs.isNotEmpty) {
+          _selectedSpecializationId = specs.first.id;
+        }
       });
     } catch (_) {
       if (mounted) setState(() => _loadingSpecs = false);
@@ -70,7 +86,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   String _normalizePhone(String value) {
-    var phone = value.trim().replaceAll(' ', '');
+    var phone = mosaedToAsciiDigits(value).trim().replaceAll(' ', '');
     if (phone.startsWith('+966')) phone = phone.substring(4);
     if (phone.startsWith('966')) phone = phone.substring(3);
     if (phone.startsWith('0')) phone = phone.substring(1);
@@ -110,7 +126,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
         maxWidth: 2000,
         imageQuality: 85,
       );
-      if (picked != null) setState(() => _contractImage = File(picked.path));
+      if (picked != null) {
+        setState(() => _contractImage = File(picked.path));
+      }
     } catch (_) {
       if (!mounted) return;
       AppFunctions.showsToast(
@@ -124,7 +142,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
   void _register() {
     if (!_formKey.currentState!.validate()) return;
 
-    if (_selectedSpecializationId == null || _selectedSpecializationId!.isEmpty) {
+    if (!_agreedToTerms) {
+      AppFunctions.showsToast(
+        'mosaedAcceptTermsRequired'.tr(),
+        MosaedColors.danger,
+        context,
+      );
+      return;
+    }
+
+    if (_selectedSpecializationId == null ||
+        _selectedSpecializationId!.isEmpty) {
       AppFunctions.showsToast(
         'mosaedSelectSpecialization'.tr(),
         MosaedColors.danger,
@@ -158,15 +186,29 @@ class _RegisterScreenState extends State<RegisterScreen> {
     return BlocConsumer<AuthCubit, AuthState>(
       listener: (context, state) {
         if (state is OtpSent) {
-          AppFunctions.showsToast(
-            'mosaedRegisterVerifyPhone'.tr(),
-            MosaedColors.success,
-            context,
-          );
-          AppFunctions.navigateToAndFinish(
-            context,
-            OtpScreen(phoneNumber: state.phoneNumber),
-          );
+          final otpCode = state.otpCode?.trim();
+          if (otpCode != null && otpCode.isNotEmpty) {
+            AppFunctions.showsToast(
+              'mosaedOtpCodeToast'.tr(args: [otpCode]),
+              MosaedColors.success,
+              context,
+            );
+          } else {
+            AppFunctions.showsToast(
+              'mosaedRegisterVerifyPhone'.tr(),
+              MosaedColors.success,
+              context,
+            );
+          }
+          if (!_otpSheetOpen) {
+            _otpSheetOpen = true;
+            OtpBottomSheet.show(
+              context,
+              phoneNumber: state.phoneNumber,
+            ).whenComplete(() {
+              if (mounted) _otpSheetOpen = false;
+            });
+          }
           context.read<AuthCubit>().reset();
         } else if (state is AuthFailure) {
           AppFunctions.showsToast(state.message, MosaedColors.danger, context);
@@ -177,201 +219,175 @@ class _RegisterScreenState extends State<RegisterScreen> {
         final isLoading = state is AuthLoading;
 
         return Scaffold(
-          backgroundColor: MosaedColors.background,
-          appBar: AppBar(
-            backgroundColor: Colors.transparent,
-            elevation: 0,
-            leading: IconButton(
-              onPressed: () => Navigator.pop(context),
-              icon: Icon(
-                Icons.arrow_back_ios_new_rounded,
-                color: MosaedColors.textPrimary,
-                size: 20.sp,
-              ),
-            ),
-          ),
+          backgroundColor: MosaedColors.surfaceWhite,
           body: SafeArea(
-            child: SingleChildScrollView(
-              padding: EdgeInsets.symmetric(horizontal: 20.w),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  children: [
-                    const MosaedLogo(width: 180),
-                    SizedBox(height: 16.h),
-                    Text(
-                      'mosaedProviderRegisterTitle'.tr(),
-                      style: getBoldStyle(
-                        fontSize: 22.sp,
-                        color: MosaedColors.textPrimary,
-                      ),
-                    ),
-                    SizedBox(height: 8.h),
-                    Text(
-                      'mosaedProviderRegisterSubtitle'.tr(),
-                      textAlign: TextAlign.center,
-                      style: getRegularStyle(
-                        fontSize: 13.sp,
-                        color: MosaedColors.textSecondary,
-                      ),
-                    ),
-                    SizedBox(height: 20.h),
-                    Container(
-                      padding: EdgeInsets.all(16.w),
-                      decoration: BoxDecoration(
-                        color: MosaedColors.surface,
-                        borderRadius: BorderRadius.circular(20.r),
-                        border: Border.all(color: MosaedColors.border),
-                      ),
+            child: Form(
+              key: _formKey,
+              child: Column(
+                children: [
+                  Expanded(
+                    child: SingleChildScrollView(
+                      padding: EdgeInsets.symmetric(horizontal: 24.w),
                       child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
+                          SizedBox(height: 20.h),
+                          AuthHeader(
+                            title: 'mosaedRegisterTitle'.tr(),
+                            subtitle: 'mosaedProviderRegisterSubtitle'.tr(),
+                            logoWidth: 142,
+                            logoHeight: 195,
+                          ),
+                          SizedBox(height: 28.h),
                           MosaedInputField(
-                            label: 'fullName'.tr(),
+                            label: 'mosaedYourName'.tr(),
                             controller: _nameController,
                             hint: 'mosaedFullNameHint'.tr(),
-                            icon: Icons.person_outline_rounded,
-                            validator: (v) =>
-                                v == null || v.isEmpty ? 'nameRequired'.tr() : null,
-                          ),
-                          SizedBox(height: 14.h),
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'phoneNumber'.tr(),
-                                style: getMediumStyle(
-                                  fontSize: 13.sp,
-                                  color: MosaedColors.textSecondary,
-                                ),
-                              ),
-                              SizedBox(height: 8.h),
-                              MosaedPhoneField(
-                                controller: _phoneController,
-                                validator: (v) => v == null || v.isEmpty
-                                    ? 'phoneRequired'.tr()
+                            onChanged: (_) => setState(() {}),
+                            validator: (value) =>
+                                value == null || value.trim().isEmpty
+                                    ? 'nameRequired'.tr()
                                     : null,
-                              ),
-                            ],
                           ),
-                          SizedBox(height: 14.h),
+                          SizedBox(height: 16.h),
+                          Align(
+                            alignment: AlignmentDirectional.centerStart,
+                            child: Text(
+                              'mosaedPhoneLabel'.tr(),
+                              style: getMediumStyle(
+                                fontSize: 14.sp,
+                                color: MosaedColors.textPrimary,
+                              ),
+                            ),
+                          ),
+                          SizedBox(height: 8.h),
+                          MosaedPhoneField(
+                            controller: _phoneController,
+                            onChanged: (_) => setState(() {}),
+                            validator: (value) {
+                              if (value == null || value.trim().isEmpty) {
+                                return 'phoneRequired'.tr();
+                              }
+                              if (mosaedPhoneDigitCount(value) < 9) {
+                                return 'mosaedPhoneInvalid'.tr();
+                              }
+                              return null;
+                            },
+                          ),
+                          SizedBox(height: 16.h),
                           MosaedInputField(
                             label: 'email'.tr(),
                             controller: _emailController,
                             hint: 'mosaedEmailHint'.tr(),
-                            icon: Icons.email_outlined,
                             keyboardType: TextInputType.emailAddress,
-                            validator: (v) {
-                              if (v == null || v.isEmpty) {
+                            onChanged: (_) => setState(() {}),
+                            validator: (value) {
+                              if (value == null || value.isEmpty) {
                                 return 'mosaedEmailRequired'.tr();
                               }
-                              if (!v.contains('@')) {
+                              if (!value.contains('@')) {
                                 return 'mosaedEmailInvalid'.tr();
                               }
                               return null;
                             },
                           ),
-                          SizedBox(height: 14.h),
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'mosaedSpecialization'.tr(),
-                                style: getMediumStyle(
-                                  fontSize: 13.sp,
-                                  color: MosaedColors.textSecondary,
-                                ),
+                          SizedBox(height: 16.h),
+                          Align(
+                            alignment: AlignmentDirectional.centerStart,
+                            child: Text(
+                              'mosaedSpecialization'.tr(),
+                              style: getMediumStyle(
+                                fontSize: 14.sp,
+                                color: MosaedColors.textPrimary,
                               ),
-                              SizedBox(height: 8.h),
-                              MosaedDropdown<String>(
-                                title: '',
-                                hint: 'mosaedSelectSpecialization'.tr(),
-                                icon: Icons.handyman_outlined,
-                                selectedValue: _selectedSpecializationId,
-                                isLoading: _loadingSpecs,
-                                items: _specializations
-                                    .map(
-                                      (s) => MosaedDropdownItem(
-                                        value: s.id,
-                                        label: s.name,
-                                      ),
-                                    )
-                                    .toList(),
-                                onSelected: (v) =>
-                                    setState(() => _selectedSpecializationId = v),
-                              ),
-                            ],
+                            ),
                           ),
-                          SizedBox(height: 14.h),
+                          SizedBox(height: 8.h),
+                          MosaedDropdown<String>(
+                            title: '',
+                            hint: 'mosaedSelectSpecialization'.tr(),
+                            icon: Icons.keyboard_arrow_down_rounded,
+                            selectedValue: _selectedSpecializationId,
+                            isLoading: _loadingSpecs,
+                            items: _specializations
+                                .map(
+                                  (spec) => MosaedDropdownItem(
+                                    value: spec.id,
+                                    label: spec.name,
+                                  ),
+                                )
+                                .toList(),
+                            onSelected: (value) => setState(
+                              () => _selectedSpecializationId = value,
+                            ),
+                          ),
+                          SizedBox(height: 16.h),
                           MosaedInputField(
                             label: 'mosaedNationalId'.tr(),
                             controller: _nationalIdController,
                             hint: 'mosaedNationalIdHint'.tr(),
-                            icon: Icons.badge_outlined,
                             keyboardType: TextInputType.number,
-                            validator: (v) => v == null || v.isEmpty
-                                ? 'mosaedNationalIdRequired'.tr()
-                                : null,
+                            onChanged: (_) => setState(() {}),
+                            validator: (value) =>
+                                value == null || value.isEmpty
+                                    ? 'mosaedNationalIdRequired'.tr()
+                                    : null,
                           ),
-                          SizedBox(height: 14.h),
+                          SizedBox(height: 16.h),
                           MosaedInputField(
                             label: 'mosaedCommercialRegistration'.tr(),
                             controller: _commercialRegController,
                             hint: 'mosaedCommercialRegistrationHint'.tr(),
-                            icon: Icons.business_outlined,
-                            validator: (v) => v == null || v.isEmpty
-                                ? 'fieldRequired'.tr()
-                                : null,
+                            onChanged: (_) => setState(() {}),
+                            validator: (value) =>
+                                value == null || value.isEmpty
+                                    ? 'fieldRequired'.tr()
+                                    : null,
                           ),
-                          SizedBox(height: 14.h),
+                          SizedBox(height: 16.h),
                           _ContractImagePicker(
                             image: _contractImage,
                             onPick: _pickContractImage,
-                            onRemove: () => setState(() => _contractImage = null),
+                            onRemove: () =>
+                                setState(() => _contractImage = null),
                           ),
                           SizedBox(height: 20.h),
-                          MosaedPrimaryButton(
-                            text: 'mosaedCreateAccount'.tr(),
-                            isLoading: isLoading,
-                            icon: Icons.person_add_alt_1_rounded,
-                            onPressed: _register,
+                          TermsAgreeTile(
+                            agreed: _agreedToTerms,
+                            onChanged: (value) =>
+                                setState(() => _agreedToTerms = value),
                           ),
+                          SizedBox(height: 20.h),
+                          AuthRichLink(
+                            prefix: 'alreadyHaveAccount'.tr(),
+                            action: 'login'.tr(),
+                            onTap: () => Navigator.pop(context),
+                          ),
+                          SizedBox(height: 24.h),
                         ],
                       ),
                     ),
-                    SizedBox(height: 20.h),
-                    GestureDetector(
-                      onTap: () => Navigator.pop(context),
-                      child: RichText(
-                        text: TextSpan(
-                          style: getRegularStyle(
-                            fontSize: 14.sp,
-                            color: MosaedColors.textSecondary,
-                          ),
-                          children: [
-                            TextSpan(text: '${'alreadyHaveAccount'.tr()} '),
-                            TextSpan(
-                              text: 'login'.tr(),
-                              style: getBoldStyle(
-                                fontSize: 14.sp,
-                                color: MosaedColors.primary,
-                              ),
-                            ),
-                          ],
+                  ),
+                  Container(
+                    decoration: const BoxDecoration(
+                      color: MosaedColors.surfaceWhite,
+                      border: Border(
+                        top: BorderSide(
+                          color: MosaedColors.fieldBorder,
+                          width: 1,
                         ),
                       ),
                     ),
-                    SizedBox(height: 12.h),
-                    Text(
-                      'mosaedRegisterTerms'.tr(),
-                      textAlign: TextAlign.center,
-                      style: getRegularStyle(
-                        fontSize: 11.sp,
-                        color: MosaedColors.textSecondary,
-                      ),
+                    padding: EdgeInsets.fromLTRB(16.w, 8.h, 24.w, 16.h),
+                    child: MosaedPrimaryButton(
+                      text: 'mosaedCreateAccount'.tr(),
+                      isLoading: isLoading,
+                      enabled: _canSubmit,
+                      fontSize: 15,
+                      onPressed: _canSubmit ? _register : null,
                     ),
-                    SizedBox(height: 24.h),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -395,27 +411,32 @@ class _ContractImagePicker extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
-          'mosaedContractImage'.tr(),
-          style: getMediumStyle(
-            fontSize: 13.sp,
-            color: MosaedColors.textSecondary,
+        Align(
+          alignment: AlignmentDirectional.centerStart,
+          child: Text(
+            'mosaedContractImage'.tr(),
+            style: getMediumStyle(
+              fontSize: 14.sp,
+              color: MosaedColors.textPrimary,
+            ),
           ),
         ),
         SizedBox(height: 8.h),
         InkWell(
           onTap: onPick,
-          borderRadius: BorderRadius.circular(14.r),
+          borderRadius: BorderRadius.circular(12.r),
           child: Container(
             width: double.infinity,
             height: image != null ? 160.h : 100.h,
             decoration: BoxDecoration(
-              color: MosaedColors.inputFill,
-              borderRadius: BorderRadius.circular(14.r),
+              color: MosaedColors.surfaceWhite,
+              borderRadius: BorderRadius.circular(12.r),
               border: Border.all(
-                color: image != null ? MosaedColors.primary : MosaedColors.border,
+                color: image != null
+                    ? MosaedColors.brand
+                    : MosaedColors.fieldBorder,
                 width: image != null ? 1.5 : 1,
               ),
             ),
@@ -424,7 +445,7 @@ class _ContractImagePicker extends StatelessWidget {
                     fit: StackFit.expand,
                     children: [
                       ClipRRect(
-                        borderRadius: BorderRadius.circular(13.r),
+                        borderRadius: BorderRadius.circular(11.r),
                         child: Image.file(image!, fit: BoxFit.cover),
                       ),
                       Positioned(
@@ -460,21 +481,21 @@ class _ContractImagePicker extends StatelessWidget {
                       Icon(
                         Icons.upload_file_rounded,
                         size: 32.sp,
-                        color: MosaedColors.primary,
+                        color: MosaedColors.brand,
                       ),
                       SizedBox(height: 8.h),
                       Text(
                         'mosaedUploadContract'.tr(),
                         style: getMediumStyle(
-                          fontSize: 13.sp,
-                          color: MosaedColors.primary,
+                          fontSize: 15.sp,
+                          color: MosaedColors.brand,
                         ),
                       ),
                       SizedBox(height: 4.h),
                       Text(
                         'mosaedContractImageHint'.tr(),
                         style: getRegularStyle(
-                          fontSize: 11.sp,
+                          fontSize: 13.sp,
                           color: MosaedColors.textHint,
                         ),
                       ),

@@ -10,7 +10,9 @@ import '../../../core/network/failure.dart';
 import '../data/provider_dues_repository.dart';
 import '../data/provider_dues_response_model.dart';
 import '../data/provider_wallet_model.dart';
+import '../../../core/widgets/mosaed_pill_tabs.dart';
 import 'cubit/provider_due_lock_cubit.dart';
+import 'widgets/payment_amount_text.dart';
 
 class ProviderDuesScreen extends StatefulWidget {
   const ProviderDuesScreen({super.key});
@@ -23,6 +25,7 @@ class _ProviderDuesScreenState extends State<ProviderDuesScreen> {
   bool _loading = true;
   String? _error;
   ProviderDuesResponse? _dues;
+  int _tab = 0;
 
   @override
   void initState() {
@@ -40,8 +43,6 @@ class _ProviderDuesScreenState extends State<ProviderDuesScreen> {
       final dueLockCubit = context.read<ProviderDueLockCubit>();
       final repo = context.read<ProviderDuesRepository>();
       final dues = await repo.getDues();
-
-      // Keep lock state in sync with the dues payload.
       dueLockCubit.applyStatus(dues.due);
 
       if (!mounted) return;
@@ -71,24 +72,37 @@ class _ProviderDuesScreenState extends State<ProviderDuesScreen> {
     await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
+  List<ProviderDueItem> _dueItems(ProviderDuesResponse dues) {
+    if (dues.items.isNotEmpty) return dues.items;
+    final outstanding = double.tryParse(dues.due.outstandingAmount) ?? 0;
+    if (outstanding <= 0) return const [];
+    return [
+      ProviderDueItem(
+        id: 'outstanding',
+        title: 'mosaedPlatformDues'.tr(),
+        serviceTotal: dues.lastServiceAmount,
+        platformDue: dues.due.outstandingAmount,
+        paymentLink: dues.due.currentPaymentLink,
+      ),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: MosaedColors.background,
+      backgroundColor: MosaedColors.surfaceWhite,
       appBar: AppBar(
         backgroundColor: MosaedColors.surfaceWhite,
         elevation: 0,
+        centerTitle: true,
         title: Text(
-          'mosaedDuePaymentRequiredTitle'.tr(),
-          style: getBoldStyle(fontSize: 18.sp, color: MosaedColors.textPrimary),
+          'mosaedPlatformDues'.tr(),
+          style: getBoldStyle(fontSize: 16.sp, color: MosaedColors.textPrimary),
         ),
-        iconTheme: const IconThemeData(color: MosaedColors.primary),
-        actions: [
-          IconButton(
-            onPressed: _loading ? null : _load,
-            icon: const Icon(Icons.refresh_rounded),
-          ),
-        ],
+        bottom: PreferredSize(
+          preferredSize: Size.fromHeight(1.h),
+          child: const Divider(height: 1, color: MosaedColors.fieldBorder),
+        ),
       ),
       body: _buildBody(),
     );
@@ -97,7 +111,7 @@ class _ProviderDuesScreenState extends State<ProviderDuesScreen> {
   Widget _buildBody() {
     if (_loading) {
       return const Center(
-        child: CircularProgressIndicator(color: MosaedColors.primary),
+        child: CircularProgressIndicator(color: MosaedColors.brand),
       );
     }
 
@@ -108,9 +122,6 @@ class _ProviderDuesScreenState extends State<ProviderDuesScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.receipt_long_outlined,
-                  size: 48.sp, color: MosaedColors.textHint),
-              SizedBox(height: 12.h),
               Text(
                 _error ?? 'mosaedRetry'.tr(),
                 textAlign: TextAlign.center,
@@ -120,11 +131,7 @@ class _ProviderDuesScreenState extends State<ProviderDuesScreen> {
                 ),
               ),
               SizedBox(height: 16.h),
-              TextButton.icon(
-                onPressed: _load,
-                icon: const Icon(Icons.refresh_rounded),
-                label: Text('mosaedRetry'.tr()),
-              ),
+              TextButton(onPressed: _load, child: Text('mosaedRetry'.tr())),
             ],
           ),
         ),
@@ -132,131 +139,234 @@ class _ProviderDuesScreenState extends State<ProviderDuesScreen> {
     }
 
     final dues = _dues!;
-    final due = dues.due;
-    final currency = 'mosaedCurrency'.tr();
+    final items = _dueItems(dues);
 
     return RefreshIndicator(
       onRefresh: _load,
-      color: MosaedColors.primary,
+      color: MosaedColors.brand,
       child: ListView(
-        padding: EdgeInsets.all(20.w),
+        padding: EdgeInsets.fromLTRB(16.w, 16.h, 16.w, 24.h),
         children: [
-          Container(
-            padding: EdgeInsets.all(16.w),
-            decoration: BoxDecoration(
-              color: MosaedColors.surfaceWhite,
-              borderRadius: BorderRadius.circular(18.r),
-              border: Border.all(color: MosaedColors.border),
-              boxShadow: MosaedColors.softShadow,
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'mosaedDueOutstandingAmount'.tr(
-                    args: [due.outstandingAmount],
-                  ),
-                  style: getMediumStyle(
-                    fontSize: 14.sp,
+          FinanceSummaryCard(
+            mainLabel: 'mosaedTotalDues'.tr(),
+            mainAmount: dues.due.outstandingAmount,
+            rightLabel: 'mosaedLastService'.tr(),
+            rightAmount: dues.lastServiceAmount,
+            leftLabel: 'mosaedLastPlatformShare'.tr(),
+            leftAmount: dues.lastPlatformShare,
+          ),
+          SizedBox(height: 18.h),
+          _DuesTabs(
+            selected: _tab,
+            onChanged: (i) => setState(() => _tab = i),
+          ),
+          SizedBox(height: 14.h),
+          if (_tab == 0) ...[
+            if (items.isEmpty)
+              Padding(
+                padding: EdgeInsets.symmetric(vertical: 28.h),
+                child: Text(
+                  'mosaedNoProviderDues'.tr(),
+                  textAlign: TextAlign.center,
+                  style: getRegularStyle(
+                    fontSize: 13.sp,
                     color: MosaedColors.textSecondary,
                   ),
                 ),
-                SizedBox(height: 8.h),
-                Text(
-                  '${due.outstandingAmount} $currency',
-                  style: getBoldStyle(
-                    fontSize: 26.sp,
-                    color: MosaedColors.primary,
-                  ),
+              )
+            else
+              ...items.map(
+                (item) => _DueItemTile(
+                  item: item,
+                  fallbackLink: dues.due.currentPaymentLink,
+                  onPay: (link) => _openPaymentLink(link),
                 ),
-                SizedBox(height: 10.h),
-                Text(
-                  due.isBlocked
-                      ? 'mosaedDueLockHint'.tr()
-                      : 'mosaedAccountUnblocked'.tr(),
+              ),
+          ] else ...[
+            if (dues.recentTransactions.isEmpty)
+              Padding(
+                padding: EdgeInsets.symmetric(vertical: 28.h),
+                child: Text(
+                  'mosaedNoRecentTransactions'.tr(),
+                  textAlign: TextAlign.center,
                   style: getRegularStyle(
                     fontSize: 13.sp,
-                    color: due.isBlocked
-                        ? MosaedColors.danger
-                        : MosaedColors.success,
+                    color: MosaedColors.textSecondary,
                   ),
                 ),
-                if (due.currentPaymentLink.trim().isNotEmpty) ...[
-                  SizedBox(height: 14.h),
-                  ElevatedButton.icon(
-                    onPressed: () => _openPaymentLink(due.currentPaymentLink),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: MosaedColors.primaryContainer,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14.r),
-                      ),
-                    ),
-                    icon: const Icon(Icons.payment_rounded),
-                    label: Text('mosaedPayNow'.tr()),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          SizedBox(height: 18.h),
-          Text(
-            'mosaedRecentTransactions'.tr(),
-            style: getBoldStyle(fontSize: 15.sp, color: MosaedColors.textPrimary),
-          ),
-          SizedBox(height: 10.h),
-          if (dues.recentTransactions.isEmpty)
-            Text(
-              'mosaedNoRecentTransactions'.tr(),
-              style: getRegularStyle(
-                fontSize: 13.sp,
-                color: MosaedColors.textSecondary,
+              )
+            else
+              ...dues.recentTransactions.map(
+                (tx) => _HistoryTile(transaction: tx),
               ),
-            )
-          else
-            ...dues.recentTransactions.map(
-              (tx) => _DueTransactionTile(transaction: tx),
-            ),
+          ],
         ],
       ),
     );
   }
 }
 
-class _DueTransactionTile extends StatelessWidget {
-  const _DueTransactionTile({required this.transaction});
+class _DuesTabs extends StatelessWidget {
+  const _DuesTabs({required this.selected, required this.onChanged});
+
+  final int selected;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return MosaedPillTabs(
+      labels: ['mosaedDuesTab'.tr(), 'mosaedDuesHistoryTab'.tr()],
+      selectedIndex: selected,
+      onChanged: onChanged,
+    );
+  }
+}
+
+class _DueItemTile extends StatelessWidget {
+  const _DueItemTile({
+    required this.item,
+    required this.fallbackLink,
+    required this.onPay,
+  });
+
+  final ProviderDueItem item;
+  final String fallbackLink;
+  final ValueChanged<String> onPay;
+
+  IconData get _icon {
+    final c = item.category.toLowerCase();
+    final t = item.title.toLowerCase();
+    if (c.contains('plumb') || t.contains('سباك')) return Icons.plumbing;
+    if (c.contains('electr') || t.contains('كهرب')) {
+      return Icons.bolt_rounded;
+    }
+    if (c.contains('ac') || t.contains('تكييف')) {
+      return Icons.ac_unit_rounded;
+    }
+    if (c.contains('clean') || t.contains('تنظيف')) {
+      return Icons.cleaning_services_outlined;
+    }
+    return Icons.handyman_outlined;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final link =
+        item.paymentLink.trim().isNotEmpty ? item.paymentLink : fallbackLink;
+
+    return Column(
+      children: [
+        Padding(
+          padding: EdgeInsets.symmetric(vertical: 12.h),
+          child: Row(
+            children: [
+              GestureDetector(
+                onTap: link.trim().isEmpty ? null : () => onPay(link),
+                child: Container(
+                  padding:
+                      EdgeInsets.symmetric(horizontal: 18.w, vertical: 10.h),
+                  decoration: BoxDecoration(
+                    color: link.trim().isEmpty
+                        ? MosaedColors.brand.withValues(alpha: 0.35)
+                        : MosaedColors.brand,
+                    borderRadius: BorderRadius.circular(8.r),
+                  ),
+                  child: Text(
+                    'mosaedPayDue'.tr(),
+                    style: getBoldStyle(fontSize: 12.sp, color: Colors.white),
+                  ),
+                ),
+              ),
+              SizedBox(width: 12.w),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      item.title,
+                      style: getBoldStyle(
+                        fontSize: 13.sp,
+                        color: MosaedColors.textPrimary,
+                      ),
+                    ),
+                    SizedBox(height: 4.h),
+                    Row(
+                      children: [
+                        Text(
+                          '${'mosaedServiceTotal'.tr()}: ',
+                          style: getRegularStyle(
+                            fontSize: 11.sp,
+                            color: MosaedColors.textSecondary,
+                          ),
+                        ),
+                        PaymentAmountText(
+                          amount: item.serviceTotal,
+                          color: MosaedColors.textSecondary,
+                          fontSize: 11,
+                          iconSize: 10,
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: 2.h),
+                    Row(
+                      children: [
+                        Text(
+                          '${'mosaedPlatformDueLine'.tr()}: ',
+                          style: getRegularStyle(
+                            fontSize: 11.sp,
+                            color: MosaedColors.textSecondary,
+                          ),
+                        ),
+                        PaymentAmountText(
+                          amount: item.platformDue,
+                          color: MosaedColors.textSecondary,
+                          fontSize: 11,
+                          iconSize: 10,
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(width: 8.w),
+              Container(
+                width: 40.w,
+                height: 40.w,
+                decoration: const BoxDecoration(
+                  color: MosaedColors.otpFill,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(_icon, color: MosaedColors.brand, size: 20.sp),
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1, color: MosaedColors.fieldBorder),
+      ],
+    );
+  }
+}
+
+class _HistoryTile extends StatelessWidget {
+  const _HistoryTile({required this.transaction});
 
   final ProviderRecentTransaction transaction;
 
   @override
   Widget build(BuildContext context) {
-    final type = transaction.transactionType.toLowerCase();
-    final isCharge = type.contains('charge') || type.contains('debit');
-    final color = isCharge ? MosaedColors.danger : MosaedColors.success;
-    final currency = 'mosaedCurrency'.tr();
+    final titleKey = transaction.displayTitle;
+    final title = titleKey.startsWith('mosaed') ? titleKey.tr() : titleKey;
 
-    return Container(
-      margin: EdgeInsets.only(bottom: 10.h),
-      padding: EdgeInsets.all(14.w),
-      decoration: BoxDecoration(
-        color: MosaedColors.surfaceWhite,
-        borderRadius: BorderRadius.circular(16.r),
-        border: Border.all(color: MosaedColors.border),
-      ),
+    return Padding(
+      padding: EdgeInsets.symmetric(vertical: 10.h),
       child: Row(
         children: [
-          Icon(
-            isCharge ? Icons.remove_circle_rounded : Icons.add_circle_rounded,
-            color: color,
-            size: 22.sp,
-          ),
-          SizedBox(width: 10.w),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  transaction.transactionType,
+                  title,
                   style: getMediumStyle(
                     fontSize: 13.sp,
                     color: MosaedColors.textPrimary,
@@ -273,22 +383,12 @@ class _DueTransactionTile extends StatelessWidget {
               ],
             ),
           ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                '${transaction.amount} $currency',
-                style: getBoldStyle(fontSize: 13.sp, color: color),
-              ),
-              SizedBox(height: 2.h),
-              Text(
-                '${'mosaedBalanceAfter'.tr()}: ${transaction.balanceAfter}',
-                style: getRegularStyle(
-                  fontSize: 10.sp,
-                  color: MosaedColors.textHint,
-                ),
-              ),
-            ],
+          PaymentAmountText(
+            amount: transaction.amount.replaceFirst(RegExp(r'^[+-]'), ''),
+            prefix: transaction.isCredit ? '+ ' : '- ',
+            color: MosaedColors.success,
+            fontSize: 13,
+            iconSize: 11,
           ),
         ],
       ),

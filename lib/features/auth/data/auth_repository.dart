@@ -110,6 +110,70 @@ class AuthRepository {
     }
   }
 
+  Future<CustomerProfile> updateProfile({
+    required String name,
+    required String phoneNumber,
+    File? photo,
+  }) async {
+    try {
+      Response response;
+      if (photo != null) {
+        final formData = FormData.fromMap({
+          'name': name,
+          'phone_number': phoneNumber,
+          'photo': await MultipartFile.fromFile(
+            photo.path,
+            filename: photo.path.split('/').last,
+          ),
+        });
+        response = await DioHelper.patchMultipart(
+          url: AppConstants.providerProfile,
+          data: formData,
+        );
+      } else {
+        response = await DioHelper.patchData(
+          url: AppConstants.providerProfile,
+          data: {
+            'name': name,
+            'phone_number': phoneNumber,
+          },
+        );
+      }
+
+      if (response.statusCode != 200 && response.statusCode != 201) {
+        throw ServerFailure(_extractError(response.data));
+      }
+
+      final map = response.data is Map<String, dynamic>
+          ? response.data as Map<String, dynamic>
+          : <String, dynamic>{};
+      final profile = (map.containsKey('id') || map.containsKey('name'))
+          ? CustomerProfile.fromJson(map)
+          : await getProviderProfile();
+
+      await CacheHelper().saveData(
+        key: AppConstants.userNameKey,
+        value: profile.name,
+      );
+      await CacheHelper().saveData(
+        key: AppConstants.phoneNumberKey,
+        value: profile.phoneNumber,
+      );
+      return profile;
+    } on DioException catch (e) {
+      throw ServerFailure.fromDioError(e);
+    }
+  }
+
+  Future<void> deleteAccount() async {
+    try {
+      await DioHelper.deleteData(url: AppConstants.providerProfile);
+    } on DioException catch (e) {
+      throw ServerFailure.fromDioError(e);
+    }
+    await clearSession();
+  }
+
   Future<void> registerProvider({
     required String name,
     required String phoneNumber,

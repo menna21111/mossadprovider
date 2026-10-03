@@ -140,7 +140,7 @@ class _MosaedDropdownState<T> extends State<MosaedDropdown<T>> {
             Expanded(
               child: InkWell(
                 onTap: _openMenu,
-                borderRadius: BorderRadius.circular(10.r),
+                borderRadius: BorderRadius.circular(12.r),
                 child: Focus(
                   focusNode: _focusNode,
                   child: Container(
@@ -150,31 +150,33 @@ class _MosaedDropdownState<T> extends State<MosaedDropdown<T>> {
                       vertical: 12.h,
                     ),
                     decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(10.r),
+                      borderRadius: BorderRadius.circular(12.r),
                       border: Border.all(
                         color: _focusNode.hasFocus
-                            ? MosaedColors.primary
-                            : MosaedColors.border,
+                            ? MosaedColors.brand
+                            : MosaedColors.fieldBorder,
                       ),
-                      color: MosaedColors.inputFill,
+                      color: MosaedColors.surfaceWhite,
                     ),
                     child: Row(
                       children: [
-                        Icon(
-                          widget.icon,
-                          size: 20.sp,
-                          color: _focusNode.hasFocus
-                              ? MosaedColors.primary
-                              : MosaedColors.textSecondary,
-                        ),
-                        SizedBox(width: 12.w),
+                        if (widget.icon != Icons.keyboard_arrow_down_rounded) ...[
+                          Icon(
+                            widget.icon,
+                            size: 20.sp,
+                            color: _focusNode.hasFocus
+                                ? MosaedColors.brand
+                                : MosaedColors.textSecondary,
+                          ),
+                          SizedBox(width: 12.w),
+                        ],
                         Expanded(
                           child: Text(
                             _displayText,
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             style: getRegularStyle(
-                              fontSize: 14.sp,
+                              fontSize: 13.sp,
                               color: hasSelection
                                   ? MosaedColors.textPrimary
                                   : MosaedColors.textHint,

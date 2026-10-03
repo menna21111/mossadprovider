@@ -26,6 +26,8 @@
 	<string>$(PRODUCT_COPYRIGHT)</string>
 	<key>NSMainNibFile</key>
 	<string>MainMenu</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Mosaed needs microphone access so you can send voice messages in chat.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>

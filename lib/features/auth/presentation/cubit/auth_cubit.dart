@@ -132,5 +132,32 @@ class AuthCubit extends Cubit<AuthState> {
     }
   }
 
+  Future<CustomerProfile> updateProfile({
+    required String name,
+    required String phoneNumber,
+    File? photo,
+  }) async {
+    final profile = await _repository.updateProfile(
+      name: name,
+      phoneNumber: phoneNumber,
+      photo: photo,
+    );
+    emit(ProfileLoaded(profile: profile));
+    return profile;
+  }
+
+  Future<void> deleteAccount() async {
+    emit(const AuthLoading());
+    try {
+      await PushNotificationService.removeTokenFromBackend();
+      await _repository.deleteAccount();
+      emit(const AuthLoggedOut());
+    } on ServerFailure catch (e) {
+      emit(AuthFailure(e.errMessage));
+    } catch (_) {
+      emit(const AuthFailure('حدث خطأ غير متوقع'));
+    }
+  }
+
   void reset() => emit(const AuthInitial());
 }

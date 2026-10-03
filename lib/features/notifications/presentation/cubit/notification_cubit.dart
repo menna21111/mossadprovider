@@ -1,4 +1,5 @@
 import 'package:equatable/equatable.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../../core/network/failure.dart';
@@ -9,6 +10,7 @@ import '../../../../core/realtime/chat_session_registry.dart';
 import '../../../../app/navigator_key.dart';
 import '../../../../app/functions.dart';
 import '../../../../core/constants/mosaed_colors.dart';
+import '../../../../core/services/notification/in_app_alert_service.dart';
 
 part 'notification_state.dart';
 
@@ -21,6 +23,7 @@ class NotificationCubit extends Cubit<NotificationState> {
   /// Fired when socket receives `new_custom_request` — refresh custom requests tab.
   void Function()? onNewCustomRequest;
   void Function()? onOfferAccepted;
+  void Function()? onNewChatMessage;
   void Function(Map<String, dynamic> payload)? onDuePaymentRequired;
   void Function()? onAccountUnblocked;
 
@@ -176,19 +179,25 @@ class NotificationCubit extends Cubit<NotificationState> {
     }
 
     _showToast(payload);
+    InAppAlertService.playIncoming();
     _dispatchSideEffects(event, payload);
   }
 
   void _showToast(Map<String, dynamic> payload) {
-    final context = navigatorKey.currentContext;
-    if (context == null) return;
-
     final title = payload['title']?.toString();
-    final body = payload['body']?.toString();
-    final message = [title, body].whereType<String>().where((s) => s.isNotEmpty).join('\n');
+    final body = payload['body']?.toString() ??
+        payload['description_preview']?.toString();
+    final message = [title, body]
+        .whereType<String>()
+        .where((s) => s.isNotEmpty)
+        .join('\n');
     if (message.isEmpty) return;
 
-    AppFunctions.showsToast(message, MosaedColors.primary, context);
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      final context = navigatorKey.currentContext;
+      if (context == null || !context.mounted) return;
+      AppFunctions.showsToast(message, MosaedColors.primary, context);
+    });
   }
 
   void _dispatchSideEffects(String event, Map<String, dynamic> payload) {
@@ -198,6 +207,9 @@ class NotificationCubit extends Cubit<NotificationState> {
         break;
       case 'offer_accepted':
         onOfferAccepted?.call();
+        break;
+      case 'new_chat_message':
+        onNewChatMessage?.call();
         break;
       case 'due_payment_required':
         onDuePaymentRequired?.call(payload);
