@@ -103,9 +103,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
     try {
       final page = await context.read<ChatRepository>().getMessages(
-            requestId: widget.requestId,
-            offset: loadOlder ? _messages.length : 0,
-          );
+        requestId: widget.requestId,
+        offset: loadOlder ? _messages.length : 0,
+      );
       if (!mounted) return;
 
       setState(() {
@@ -121,9 +121,9 @@ class _ChatScreenState extends State<ChatScreen> {
       });
 
       if (!loadOlder) {
-        await context
-            .read<ChatRepository>()
-            .markMessagesAsRead(widget.requestId);
+        await context.read<ChatRepository>().markMessagesAsRead(
+          widget.requestId,
+        );
         _scrollToBottom();
       }
     } on ServerFailure catch (e) {
@@ -221,8 +221,7 @@ class _ChatScreenState extends State<ChatScreen> {
             m.isFromProvider &&
             m.messageType == message.messageType &&
             ((message.hasCaption && m.message == message.message) ||
-                (!message.hasCaption &&
-                    m.messageType != ChatMessageType.text)),
+                (!message.hasCaption && m.messageType != ChatMessageType.text)),
       );
       if (pendingIndex >= 0 && message.isFromProvider) {
         final updated = [..._messages];
@@ -290,9 +289,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
       if (!mounted) return;
       final message = await context.read<ChatRepository>().sendMessage(
-            requestId: widget.requestId,
-            message: text,
-          );
+        requestId: widget.requestId,
+        message: text,
+      );
       if (mounted) {
         setState(() {
           _messages = [..._messages, message];
@@ -325,8 +324,8 @@ class _ChatScreenState extends State<ChatScreen> {
     final max = type == ChatMessageType.image
         ? _imageMaxBytes
         : type == ChatMessageType.voice
-            ? _voiceMaxBytes
-            : _fileMaxBytes;
+        ? _voiceMaxBytes
+        : _fileMaxBytes;
     if (size > max) {
       if (!mounted) return;
       final mb = (max / (1024 * 1024)).round();
@@ -362,8 +361,9 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       if (!mounted) return;
       setState(() {
-        _messages =
-            _messages.map((m) => m.id == optimistic.id ? sent : m).toList();
+        _messages = _messages
+            .map((m) => m.id == optimistic.id ? sent : m)
+            .toList();
         _error = null;
       });
     } on ServerFailure catch (e) {
@@ -582,8 +582,9 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           if (_hasMore)
             TextButton(
-              onPressed:
-                  _loadingOlder ? null : () => _loadHistory(loadOlder: true),
+              onPressed: _loadingOlder
+                  ? null
+                  : () => _loadHistory(loadOlder: true),
               child: Text(
                 _loadingOlder ? '...' : 'mosaedLoadOlderMessages'.tr(),
               ),
@@ -594,58 +595,57 @@ class _ChatScreenState extends State<ChatScreen> {
                     child: CircularProgressIndicator(color: MosaedColors.brand),
                   )
                 : _error != null && _messages.isEmpty
-                    ? _ErrorState(error: _error!, onRetry: _bootstrap)
-                    : _messages.isEmpty
-                        ? Center(
-                            child: Text(
-                              'mosaedWriteMessage'.tr(),
-                              style: getRegularStyle(
-                                fontSize: 14.sp,
-                                color: MosaedColors.textHint,
+                ? _ErrorState(error: _error!, onRetry: _bootstrap)
+                : _messages.isEmpty
+                ? Center(
+                    child: Text(
+                      'mosaedWriteMessage'.tr(),
+                      style: getRegularStyle(
+                        fontSize: 14.sp,
+                        color: MosaedColors.textHint,
+                      ),
+                    ),
+                  )
+                : ListView.builder(
+                    controller: _scrollController,
+                    padding: EdgeInsets.symmetric(
+                      horizontal: 16.w,
+                      vertical: 12.h,
+                    ),
+                    itemCount: _messages.length + 1,
+                    itemBuilder: (context, index) {
+                      if (index == 0) {
+                        return Padding(
+                          padding: EdgeInsets.only(bottom: 14.h),
+                          child: Center(
+                            child: Container(
+                              padding: EdgeInsets.symmetric(
+                                horizontal: 14.w,
+                                vertical: 5.h,
+                              ),
+                              decoration: BoxDecoration(
+                                color: MosaedColors.surfaceContainerLow,
+                                borderRadius: BorderRadius.circular(20.r),
+                              ),
+                              child: Text(
+                                'mosaedToday'.tr(),
+                                style: getMediumStyle(
+                                  fontSize: 11.sp,
+                                  color: MosaedColors.textSecondary,
+                                ),
                               ),
                             ),
-                          )
-                        : ListView.builder(
-                            controller: _scrollController,
-                            padding: EdgeInsets.symmetric(
-                              horizontal: 16.w,
-                              vertical: 12.h,
-                            ),
-                            itemCount: _messages.length + 1,
-                            itemBuilder: (context, index) {
-                              if (index == 0) {
-                                return Padding(
-                                  padding: EdgeInsets.only(bottom: 14.h),
-                                  child: Center(
-                                    child: Container(
-                                      padding: EdgeInsets.symmetric(
-                                        horizontal: 14.w,
-                                        vertical: 5.h,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: MosaedColors.surfaceContainerLow,
-                                        borderRadius:
-                                            BorderRadius.circular(20.r),
-                                      ),
-                                      child: Text(
-                                        'mosaedToday'.tr(),
-                                        style: getMediumStyle(
-                                          fontSize: 11.sp,
-                                          color: MosaedColors.textSecondary,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                );
-                              }
-                              final message = _messages[index - 1];
-                              return ChatMessageBubble(
-                                message: message,
-                                peerImage: widget.peerImage,
-                                peerName: title,
-                              );
-                            },
                           ),
+                        );
+                      }
+                      final message = _messages[index - 1];
+                      return ChatMessageBubble(
+                        message: message,
+                        peerImage: widget.peerImage,
+                        peerName: title,
+                      );
+                    },
+                  ),
           ),
           ChatInputBar(
             controller: _controller,
@@ -720,10 +720,7 @@ class _OrderSummaryBar extends StatelessWidget {
             onPressed: onViewDetails,
             child: Text(
               'mosaedViewDetails'.tr(),
-              style: getBoldStyle(
-                fontSize: 12.sp,
-                color: MosaedColors.brand,
-              ),
+              style: getBoldStyle(fontSize: 12.sp, color: MosaedColors.brand),
             ),
           ),
         ],
@@ -741,13 +738,12 @@ class _HeaderAvatar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final trimmed = name.trim();
-    final isGeneric = trimmed.isEmpty ||
+    final isGeneric =
+        trimmed.isEmpty ||
         trimmed.toLowerCase() == 'customer' ||
         trimmed.toLowerCase() == 'client' ||
         trimmed == 'عميل';
-    final letter = isGeneric
-        ? 'C'
-        : trimmed[0].toUpperCase();
+    final letter = isGeneric ? 'C' : trimmed[0].toUpperCase();
 
     return ClipOval(
       child: Container(
